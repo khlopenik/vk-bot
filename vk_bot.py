@@ -1,0 +1,707 @@
+"""
+FRAME VK Bot — AI-фотосессии для ВКонтакте
+Общая Supabase БД с TG-ботом (VK user_id смещён на +10_000_000_000 чтобы не пересекаться с TG).
+"""
+
+import os
+import time
+import threading
+import json
+import requests
+import vk_api
+from vk_api.longpoll import VkLongPoll, VkEventType
+from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+from vk_api import VkUpload
+from typing import Optional
+
+# ─── Env ──────────────────────────────────────────────────────────────────────
+VK_TOKEN        = os.environ.get("VK_TOKEN", "")           # токен сообщества
+MUAPI_KEY       = os.environ.get("MUAPI_KEY", "")
+SUPABASE_URL    = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY    = os.environ.get("SUPABASE_KEY", "")
+YOKASSA_SHOP_ID = os.environ.get("YOKASSA_SHOP_ID", "")
+YOKASSA_KEY     = os.environ.get("YOKASSA_KEY", "")
+ADMIN_VK_ID     = int(os.environ.get("ADMIN_VK_ID", "0"))
+
+MUAPI_URL = "https://api.muapi.ai/api/v1"
+MUAPI_HEADERS = {"x-api-key": MUAPI_KEY}
+
+# VK user_id смещается, чтобы не пересекаться с TG user_id в Supabase
+VK_ID_OFFSET = 10_000_000_000
+
+# ─── Модели ───────────────────────────────────────────────────────────────────
+GALLERY_MODELS = {
+    "std": ("nano-banana-edit",        "image_url", True,  "⭐ Стандарт"),
+    "v2":  ("nano-banana-2-edit",      "image_url", True,  "✨ Версия 2"),
+    "pro": ("nano-banana-pro-edit",    "image_url", True,  "💎 Про"),
+}
+
+DIAMOND_MODELS = {
+    "nb_edit":   ("nano-banana-edit",                     79,  "⭐ Nano Banana"),
+    "nb2_edit":  ("nano-banana-2-edit",                   99,  "✨ Nano Banana 2"),
+    "nbpro":     ("nano-banana-pro-edit",                149,  "💎 Nano Banana Pro"),
+    "gpt4o":     ("gpt4o-image-to-image",                 99,  "🤖 GPT-4o"),
+    "gpt_img2":  ("gpt-image-2-image-to-image",          199,  "🤖 GPT Image 2"),
+    "seedream":  ("bytedance-seedream-v4.5-edit",         99,  "🌱 Seedream"),
+    "grok_i2i":  ("grok-imagine-image-to-image",          99,  "🧠 Grok"),
+    "kling_o3":  ("kling-o3-image-edit",                  79,  "🎬 Kling O3"),
+    "flux_pro":  ("flux-kontext-pro-i2i",                 79,  "⚡ Flux Pro"),
+    "flux_max":  ("flux-kontext-max-i2i",                 99,  "⚡ Flux Max"),
+    "pulid":     ("flux-pulid",                           99,  "🎭 PuLID"),
+}
+
+TARIFF_PRICES = {
+    "trial":    ("🎁 Пробный — 3 фото",        {"std": 1, "v2": 1, "pro": 1},  None,  149),
+    "std_1":    ("⭐ Стандарт — 1 фото",        "std",   1,   79),
+    "std_10":   ("⭐ Стандарт — 10 фото",       "std",  10,  590),
+    "std_30":   ("⭐ Стандарт — 30 фото",       "std",  30, 1490),
+    "v2_1":     ("✨ Версия 2 — 1 фото",        "v2",    1,   99),
+    "v2_10":    ("✨ Версия 2 — 10 фото",       "v2",   10,  790),
+    "v2_30":    ("✨ Версия 2 — 30 фото",       "v2",   30, 1890),
+    "pro_1":    ("💎 Про — 1 фото",             "pro",   1,  149),
+    "pro_10":   ("💎 Про — 10 фото",            "pro",  10, 1190),
+    "pro_30":   ("💎 Про — 30 фото",            "pro",  30, 2490),
+    "diamond_500":  ("💎 500 алмазов",   "diamond",  500,  490),
+    "diamond_1500": ("💎 1500 алмазов",  "diamond", 1500, 1290),
+    "diamond_3000": ("💎 3000 алмазов",  "diamond", 3000, 2490),
+    "diamond_6000": ("💎 6000 алмазов",  "diamond", 6000, 3990),
+}
+
+FAILED_SENTINEL = "__FAILED__"
+
+# ─── Состояния пользователей (в памяти) ──────────────────────────────────────
+user_data: dict = {}
+user_lock = threading.Lock()
+
+def get_user(vk_id: int) -> dict:
+    with user_lock:
+        if vk_id not in user_data:
+            user_data[vk_id] = {
+                "waiting_for":     None,   # "photo" | "model" | "prompt" | "diamond_model"
+                "face_url":        None,
+                "selected_model":  "std",
+                "std_credits":     0,
+                "v2_credits":      0,
+                "pro_credits":     0,
+                "diamond_credits": 0,
+                "gift_credits":    0,
+                "pd_consent":      False,
+            }
+            _load_credits_from_db(vk_id)
+        return user_data[vk_id]
+
+def _db_id(vk_id: int) -> int:
+    return VK_ID_OFFSET + vk_id
+
+# ─── Supabase ─────────────────────────────────────────────────────────────────
+def _sb_headers() -> dict:
+    return {
+        "apikey":        SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type":  "application/json",
+    }
+
+def _load_credits_from_db(vk_id: int) -> None:
+    if not SUPABASE_URL:
+        return
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/user_credits",
+            headers=_sb_headers(),
+            params={"user_id": f"eq.{_db_id(vk_id)}",
+                    "select": "std_credits,v2_credits,pro_credits,diamond_credits,gift_credits"},
+            timeout=10,
+        )
+        if r.ok and r.json():
+            row = r.json()[0]
+            u = user_data[vk_id]
+            for k in ("std_credits","v2_credits","pro_credits","diamond_credits","gift_credits"):
+                if row.get(k) is not None:
+                    u[k] = row[k]
+            if any(row.get(k, 0) for k in ("std_credits","v2_credits","pro_credits","diamond_credits")):
+                u["pd_consent"] = True
+    except Exception as e:
+        print(f"[DB] load_credits error: {e}")
+
+def _save_credits_to_db(vk_id: int) -> None:
+    if not SUPABASE_URL:
+        return
+    u = user_data[vk_id]
+    try:
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/user_credits",
+            headers={**_sb_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json={
+                "user_id":         _db_id(vk_id),
+                "std_credits":     u.get("std_credits", 0),
+                "v2_credits":      u.get("v2_credits", 0),
+                "pro_credits":     u.get("pro_credits", 0),
+                "nude_credits":    0,
+                "family_credits":  0,
+                "couples_credits": 0,
+                "video_credits":   0,
+                "music_credits":   0,
+                "diamond_credits": u.get("diamond_credits", 0),
+                "gift_credits":    u.get("gift_credits", 0),
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[DB] save_credits error: {e}")
+
+def _save_history(vk_id: int, prompt: str, result_url: str) -> None:
+    if not SUPABASE_URL:
+        return
+    try:
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/generation_history",
+            headers=_sb_headers(),
+            json={
+                "user_id":    _db_id(vk_id),
+                "result_url": result_url,
+                "prompt":     str(prompt)[:200],
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[DB] save_history error: {e}")
+
+# ─── MuAPI ────────────────────────────────────────────────────────────────────
+def start_generation(prompt: str, model_slug: str, image_url: str,
+                     input_type: str = "image_url") -> Optional[str]:
+    body: dict = {}
+    if prompt:
+        body["prompt"] = prompt
+    if image_url:
+        body[input_type] = image_url
+    try:
+        resp = requests.post(f"{MUAPI_URL}/{model_slug}",
+                             headers=MUAPI_HEADERS, json=body, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("request_id") or data.get("id")
+    except Exception as e:
+        print(f"[MuAPI] start_generation error: {e}")
+        return None
+
+def poll_result(request_id: str, max_attempts: int = 60) -> Optional[str]:
+    for _ in range(max_attempts):
+        time.sleep(3)
+        try:
+            r = requests.get(f"{MUAPI_URL}/predictions/{request_id}/result",
+                             headers=MUAPI_HEADERS, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            status = data.get("status", "")
+            if status == "completed":
+                outputs = data.get("outputs", [])
+                return outputs[0] if outputs else FAILED_SENTINEL
+            if status in ("failed", "error"):
+                return FAILED_SENTINEL
+        except Exception as e:
+            print(f"[MuAPI] poll error: {e}")
+    return None
+
+# ─── Кредиты ──────────────────────────────────────────────────────────────────
+CREDIT_KEY = {"std": "std_credits", "v2": "v2_credits", "pro": "pro_credits"}
+
+def has_credits(vk_id: int, model_key: str) -> bool:
+    u = get_user(vk_id)
+    if model_key in DIAMOND_MODELS:
+        cost = DIAMOND_MODELS[model_key][1]
+        return u.get("diamond_credits", 0) >= cost
+    ckey = CREDIT_KEY.get(model_key, "std_credits")
+    return u.get(ckey, 0) > 0 or u.get("gift_credits", 0) > 0
+
+def deduct_credit(vk_id: int, model_key: str) -> None:
+    u = get_user(vk_id)
+    if model_key in DIAMOND_MODELS:
+        cost = DIAMOND_MODELS[model_key][1]
+        u["diamond_credits"] = max(0, u.get("diamond_credits", 0) - cost)
+    else:
+        ckey = CREDIT_KEY.get(model_key, "std_credits")
+        if u.get(ckey, 0) > 0:
+            u[ckey] -= 1
+        elif u.get("gift_credits", 0) > 0:
+            u["gift_credits"] -= 1
+    _save_credits_to_db(vk_id)
+
+def add_credits(vk_id: int, tariff_key: str) -> str:
+    u = get_user(vk_id)
+    t = TARIFF_PRICES.get(tariff_key)
+    if not t:
+        return "Тариф не найден"
+    label, ctype, amount, price = t
+    if isinstance(ctype, dict):
+        for k, v in ctype.items():
+            u[CREDIT_KEY.get(k, k + "_credits")] = u.get(CREDIT_KEY.get(k, k + "_credits"), 0) + v
+    elif ctype == "diamond":
+        u["diamond_credits"] = u.get("diamond_credits", 0) + amount
+    else:
+        u[CREDIT_KEY.get(ctype, ctype + "_credits")] = u.get(CREDIT_KEY.get(ctype, ctype + "_credits"), 0) + amount
+    _save_credits_to_db(vk_id)
+    return f"✅ Начислено: {label}"
+
+def credits_text(vk_id: int) -> str:
+    u = get_user(vk_id)
+    std  = u.get("std_credits", 0)
+    v2   = u.get("v2_credits", 0)
+    pro  = u.get("pro_credits", 0)
+    dia  = u.get("diamond_credits", 0)
+    gift = u.get("gift_credits", 0)
+    lines = ["💳 Ваш баланс:"]
+    if std:  lines.append(f"  ⭐ Стандарт: {std} фото")
+    if v2:   lines.append(f"  ✨ Версия 2: {v2} фото")
+    if pro:  lines.append(f"  💎 Про: {pro} фото")
+    if dia:  lines.append(f"  🔷 Алмазы: {dia} 💎")
+    if gift: lines.append(f"  🎁 Подарочные: {gift} фото")
+    if len(lines) == 1:
+        lines.append("  Кредитов нет — купите тариф!")
+    return "\n".join(lines)
+
+# ─── YooKassa платёж ──────────────────────────────────────────────────────────
+def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
+    t = TARIFF_PRICES.get(tariff_key)
+    if not t or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
+        return None
+    label, _, _, price = t
+    try:
+        import uuid
+        r = requests.post(
+            "https://api.yookassa.ru/v3/payments",
+            auth=(YOKASSA_SHOP_ID, YOKASSA_KEY),
+            headers={"Idempotence-Key": str(uuid.uuid4()),
+                     "Content-Type": "application/json"},
+            json={
+                "amount": {"value": str(price) + ".00", "currency": "RUB"},
+                "confirmation": {"type": "redirect",
+                                 "return_url": "https://vk.com"},
+                "capture": True,
+                "description": f"FRAME VK: {label} (vk_id={vk_id})",
+                "metadata": {"vk_id": str(vk_id), "tariff": tariff_key},
+            },
+            timeout=15,
+        )
+        data = r.json()
+        return data.get("confirmation", {}).get("confirmation_url")
+    except Exception as e:
+        print(f"[YooKassa] error: {e}")
+        return None
+
+# ─── Клавиатуры ───────────────────────────────────────────────────────────────
+def kb_main() -> str:
+    kb = VkKeyboard(one_time=False)
+    kb.add_button("📸 Генерация фото", VkKeyboardColor.PRIMARY)
+    kb.add_line()
+    kb.add_button("💳 Баланс", VkKeyboardColor.SECONDARY)
+    kb.add_button("🛒 Купить кредиты", VkKeyboardColor.POSITIVE)
+    kb.add_line()
+    kb.add_button("ℹ️ О боте", VkKeyboardColor.SECONDARY)
+    return kb.get_keyboard()
+
+def kb_model_choice() -> str:
+    kb = VkKeyboard(one_time=True)
+    kb.add_button("⭐ Стандарт", VkKeyboardColor.SECONDARY)
+    kb.add_button("✨ Версия 2", VkKeyboardColor.SECONDARY)
+    kb.add_line()
+    kb.add_button("💎 Про", VkKeyboardColor.PRIMARY)
+    kb.add_button("🔷 Профи (алмазы)", VkKeyboardColor.POSITIVE)
+    kb.add_line()
+    kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
+    return kb.get_keyboard()
+
+def kb_diamond_models() -> str:
+    kb = VkKeyboard(one_time=True)
+    keys = list(DIAMOND_MODELS.keys())
+    for i, key in enumerate(keys):
+        slug, cost, name = DIAMOND_MODELS[key]
+        kb.add_button(f"{name} ({cost}💎)", VkKeyboardColor.SECONDARY)
+        if (i + 1) % 2 == 0 and i < len(keys) - 1:
+            kb.add_line()
+    kb.add_line()
+    kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
+    return kb.get_keyboard()
+
+def kb_tariffs_basic() -> str:
+    kb = VkKeyboard(one_time=True)
+    kb.add_button("🎁 Пробный 149₽", VkKeyboardColor.POSITIVE)
+    kb.add_line()
+    kb.add_button("⭐ Станд. 10 фото 590₽", VkKeyboardColor.SECONDARY)
+    kb.add_button("✨ Версия2 10 фото 790₽", VkKeyboardColor.SECONDARY)
+    kb.add_line()
+    kb.add_button("💎 Про 10 фото 1190₽", VkKeyboardColor.PRIMARY)
+    kb.add_line()
+    kb.add_button("🔷 Алмазы 500шт 490₽", VkKeyboardColor.SECONDARY)
+    kb.add_button("🔷 Алмазы 1500шт 1290₽", VkKeyboardColor.SECONDARY)
+    kb.add_line()
+    kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
+    return kb.get_keyboard()
+
+def kb_cancel() -> str:
+    kb = VkKeyboard(one_time=True)
+    kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
+    return kb.get_keyboard()
+
+# ─── VK утилиты ───────────────────────────────────────────────────────────────
+_rand = __import__("random").randint
+
+def send(vk, peer_id: int, text: str, keyboard: str = None, attachment: str = None) -> None:
+    kwargs = {"peer_id": peer_id, "message": text, "random_id": _rand(0, 2**31)}
+    if keyboard:
+        kwargs["keyboard"] = keyboard
+    if attachment:
+        kwargs["attachment"] = attachment
+    vk.messages.send(**kwargs)
+
+def get_photo_url(vk, event) -> Optional[str]:
+    """Извлекаем URL максимального размера из вложений фото."""
+    for att in getattr(event, "attachments", {}) if hasattr(event, "attachments") else []:
+        pass
+    # Attachments в LongPoll приходят по-другому — читаем из message
+    for att in event.message_data.get("attachments", []) if hasattr(event, "message_data") else []:
+        if att.get("type") == "photo":
+            sizes = att["photo"].get("sizes", [])
+            if sizes:
+                best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
+                return best.get("url")
+    return None
+
+def upload_result_to_vk(vk, upload: VkUpload, group_id: int, result_url: str) -> Optional[str]:
+    """Скачиваем результат и загружаем в VK как attachment."""
+    try:
+        resp = requests.get(result_url, timeout=30)
+        resp.raise_for_status()
+        # Сохраняем во временный файл
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            f.write(resp.content)
+            tmp_path = f.name
+        photos = upload.photo_messages(tmp_path)
+        os.unlink(tmp_path)
+        p = photos[0]
+        return f"photo{p['owner_id']}_{p['id']}"
+    except Exception as e:
+        print(f"[VK upload] error: {e}")
+        return None
+
+# ─── Логика сообщений ─────────────────────────────────────────────────────────
+def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None:
+    u = get_user(vk_id)
+    t = text.strip().lower()
+
+    # ── Команды навигации (сбрасывают waiting_for) ───────────────────────────
+    if t in ("начать", "старт", "/start", "привет", "start"):
+        u["waiting_for"] = None
+        if not u.get("pd_consent"):
+            u["pd_consent"] = True
+        send(vk, vk_id,
+             "👋 Привет! Я FRAME — бот AI-фотосессий.\n\n"
+             "Загружу твоё фото и обработаю нейросетью в любом стиле.\n\n"
+             "Выбери действие:",
+             keyboard=kb_main())
+        return
+
+    if t in ("ℹ️ о боте", "о боте", "помощь", "help", "/help"):
+        u["waiting_for"] = None
+        send(vk, vk_id,
+             "🖼 FRAME — AI-нейрофотосессии\n\n"
+             "Как работает:\n"
+             "1. Нажми «📸 Генерация фото»\n"
+             "2. Отправь своё фото\n"
+             "3. Выбери модель (стиль)\n"
+             "4. Получи результат через ~30 сек\n\n"
+             "Типы кредитов:\n"
+             "⭐ Стандарт — базовое качество\n"
+             "✨ Версия 2 — улучшенное\n"
+             "💎 Про — максимальное\n"
+             "🔷 Алмазы — для Профи-моделей\n\n"
+             "По вопросам пишите в сообщения сообщества.",
+             keyboard=kb_main())
+        return
+
+    if t in ("💳 баланс", "баланс", "balance"):
+        u["waiting_for"] = None
+        send(vk, vk_id, credits_text(vk_id), keyboard=kb_main())
+        return
+
+    if t in ("🛒 купить кредиты", "купить кредиты", "купить", "тарифы"):
+        u["waiting_for"] = "tariff_select"
+        send(vk, vk_id,
+             "💳 Выберите тариф:\n\n"
+             "🎁 Пробный — 1⭐+1✨+1💎 за 149₽\n"
+             "⭐ Стандарт 10 — 590₽\n"
+             "✨ Версия2 10 — 790₽\n"
+             "💎 Про 10 — 1190₽\n"
+             "🔷 500 алмазов — 490₽\n"
+             "🔷 1500 алмазов — 1290₽",
+             keyboard=kb_tariffs_basic())
+        return
+
+    if t in ("📸 генерация фото", "генерация фото", "генерировать", "генерация"):
+        u["waiting_for"] = "photo"
+        send(vk, vk_id,
+             "📷 Отправьте ваше фото (лицо должно быть чётко видно):",
+             keyboard=kb_cancel())
+        return
+
+    if t in ("❌ отмена", "отмена", "cancel"):
+        u["waiting_for"] = None
+        send(vk, vk_id, "Отменено.", keyboard=kb_main())
+        return
+
+    # ── Выбор тарифа ──────────────────────────────────────────────────────────
+    if u.get("waiting_for") == "tariff_select":
+        tariff_map = {
+            "🎁 пробный 149₽":             "trial",
+            "⭐ станд. 10 фото 590₽":      "std_10",
+            "✨ версия2 10 фото 790₽":     "v2_10",
+            "💎 про 10 фото 1190₽":        "pro_10",
+            "🔷 алмазы 500шт 490₽":        "diamond_500",
+            "🔷 алмазы 1500шт 1290₽":      "diamond_1500",
+        }
+        tariff_key = tariff_map.get(t)
+        if tariff_key:
+            u["waiting_for"] = None
+            price = TARIFF_PRICES[tariff_key][3]
+            link = create_yookassa_link(vk_id, tariff_key)
+            if link:
+                send(vk, vk_id,
+                     f"💳 Ссылка для оплаты {TARIFF_PRICES[tariff_key][0]} — {price}₽:\n\n{link}\n\n"
+                     "После оплаты кредиты будут начислены автоматически.",
+                     keyboard=kb_main())
+            else:
+                send(vk, vk_id,
+                     "⚠️ Не удалось создать ссылку для оплаты. Напишите в сообщения сообщества.",
+                     keyboard=kb_main())
+        else:
+            send(vk, vk_id, "Выберите тариф из списка:", keyboard=kb_tariffs_basic())
+        return
+
+    # ── Выбор модели (галерея) ────────────────────────────────────────────────
+    if u.get("waiting_for") == "model_select":
+        model_map = {
+            "⭐ стандарт": "std",
+            "✨ версия 2": "v2",
+            "💎 про":      "pro",
+        }
+        if t in model_map:
+            key = model_map[t]
+            if not has_credits(vk_id, key):
+                send(vk, vk_id,
+                     f"❌ Нет кредитов '{GALLERY_MODELS[key][3]}'.\nКупите тариф или выберите другую модель.",
+                     keyboard=kb_model_choice())
+                return
+            u["selected_model"] = key
+            u["waiting_for"] = "prompt"
+            send(vk, vk_id,
+                 f"✅ Модель: {GALLERY_MODELS[key][3]}\n\n"
+                 "Введите промпт (описание желаемого стиля, образа).\n"
+                 "Или отправьте «-» чтобы использовать стандартный стиль:",
+                 keyboard=kb_cancel())
+            return
+
+        if t in ("🔷 профи (алмазы)", "профи", "алмазы"):
+            u["waiting_for"] = "diamond_model_select"
+            dia = u.get("diamond_credits", 0)
+            send(vk, vk_id,
+                 f"🔷 Ваш баланс: {dia} 💎\n\nВыберите Профи-модель:",
+                 keyboard=kb_diamond_models())
+            return
+
+        send(vk, vk_id, "Выберите модель из предложенных:", keyboard=kb_model_choice())
+        return
+
+    # ── Выбор Профи-модели (алмазы) ──────────────────────────────────────────
+    if u.get("waiting_for") == "diamond_model_select":
+        matched_key = None
+        for key, (slug, cost, name) in DIAMOND_MODELS.items():
+            btn_label = f"{name} ({cost}💎)".lower()
+            if t == btn_label:
+                matched_key = key
+                break
+        if matched_key:
+            if not has_credits(vk_id, matched_key):
+                cost = DIAMOND_MODELS[matched_key][1]
+                dia = u.get("diamond_credits", 0)
+                send(vk, vk_id,
+                     f"❌ Нужно {cost}💎, у вас {dia}💎.\nКупите алмазы или выберите другую модель.",
+                     keyboard=kb_diamond_models())
+                return
+            u["selected_model"] = matched_key
+            u["waiting_for"] = "prompt"
+            name = DIAMOND_MODELS[matched_key][2]
+            cost = DIAMOND_MODELS[matched_key][1]
+            send(vk, vk_id,
+                 f"✅ Модель: {name} ({cost}💎)\n\n"
+                 "Введите промпт (описание стиля).\nИли «-» для стандартного:",
+                 keyboard=kb_cancel())
+            return
+        send(vk, vk_id, "Выберите модель из списка:", keyboard=kb_diamond_models())
+        return
+
+    # ── Промпт → запуск генерации ─────────────────────────────────────────────
+    if u.get("waiting_for") == "prompt":
+        prompt = "" if t == "-" else text.strip()
+        face_url = u.get("face_url")
+        model_key = u.get("selected_model", "std")
+
+        if not face_url:
+            u["waiting_for"] = "photo"
+            send(vk, vk_id, "❌ Фото не найдено. Отправьте фото заново:", keyboard=kb_cancel())
+            return
+
+        u["waiting_for"] = None
+        send(vk, vk_id, "⏳ Генерация запущена, ждите ~30-60 секунд...")
+
+        def _generate():
+            if model_key in DIAMOND_MODELS:
+                slug, cost, name = DIAMOND_MODELS[model_key]
+                inp_type = "image_url"
+            else:
+                slug, inp_type, needs_prompt, name = GALLERY_MODELS[model_key]
+
+            request_id = start_generation(prompt, slug, face_url, inp_type)
+            if not request_id:
+                send(vk, vk_id, "❌ Ошибка запуска генерации. Попробуйте позже.", keyboard=kb_main())
+                return
+
+            result_url = poll_result(request_id)
+            if not result_url or result_url == FAILED_SENTINEL:
+                send(vk, vk_id, "❌ Генерация не удалась. Кредит не списан. Попробуйте снова.", keyboard=kb_main())
+                return
+
+            deduct_credit(vk_id, model_key)
+            _save_history(vk_id, prompt or "стандартный стиль", result_url)
+
+            att = upload_result_to_vk(vk, upload, group_id, result_url)
+            if att:
+                send(vk, vk_id, "✅ Готово! Вот ваше фото:", keyboard=kb_main(), attachment=att)
+            else:
+                send(vk, vk_id, f"✅ Готово! Ваше фото:\n{result_url}", keyboard=kb_main())
+
+        threading.Thread(target=_generate, daemon=True).start()
+        return
+
+    # ── Неизвестная команда ───────────────────────────────────────────────────
+    send(vk, vk_id, "Выберите действие:", keyboard=kb_main())
+
+
+def handle_photo(vk, upload, group_id: int, vk_id: int, photo_url: str) -> None:
+    u = get_user(vk_id)
+    u["face_url"] = photo_url
+
+    if u.get("waiting_for") == "photo":
+        u["waiting_for"] = "model_select"
+        send(vk, vk_id, "📸 Фото получено! Выберите модель (стиль):", keyboard=kb_model_choice())
+    else:
+        u["waiting_for"] = "model_select"
+        send(vk, vk_id, "📸 Фото сохранено! Выберите модель:", keyboard=kb_model_choice())
+
+# ─── Webhook для YooKassa (нужен Flask) ──────────────────────────────────────
+def make_flask_app(vk):
+    """Flask для получения YooKassa webhook."""
+    try:
+        from flask import Flask, request as freq, jsonify
+    except ImportError:
+        return None
+
+    app = Flask(__name__)
+
+    @app.route("/yookassa-webhook-vk", methods=["POST"])
+    def yk_webhook():
+        data = freq.get_json(silent=True) or {}
+        obj = data.get("object", {})
+        if data.get("event") != "payment.succeeded":
+            return jsonify(ok=True)
+        meta = obj.get("metadata", {})
+        vk_id_str = meta.get("vk_id")
+        tariff_key = meta.get("tariff")
+        if not vk_id_str or not tariff_key:
+            return jsonify(ok=True)
+        vk_id = int(vk_id_str)
+        msg = add_credits(vk_id, tariff_key)
+        send(vk, vk_id, f"✅ Оплата получена!\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
+        return jsonify(ok=True)
+
+    return app
+
+# ─── Главный цикл ─────────────────────────────────────────────────────────────
+def main():
+    if not VK_TOKEN:
+        print("❌ VK_TOKEN не задан в env!")
+        return
+
+    vk_session = vk_api.VkApi(token=VK_TOKEN)
+    vk = vk_session.get_api()
+    upload = VkUpload(vk_session)
+
+    # Определяем group_id из токена
+    try:
+        group_info = vk.groups.getById()
+        group_id = group_info[0]["id"]
+        print(f"✅ Бот запущен: {group_info[0]['name']} (id{group_id})")
+    except Exception as e:
+        print(f"⚠️ Не удалось получить group_id: {e}")
+        group_id = 0
+
+    # Flask для YooKassa webhook (запускаем в фоне)
+    port = int(os.environ.get("PORT", "5000"))
+    flask_app = make_flask_app(vk)
+    if flask_app:
+        t = threading.Thread(
+            target=lambda: flask_app.run(host="0.0.0.0", port=port, use_reloader=False),
+            daemon=True
+        )
+        t.start()
+        print(f"✅ Flask webhook на порту {port}")
+
+    longpoll = VkLongPoll(vk_session)
+    print("🔄 Long Poll запущен, жду сообщений...")
+
+    for event in longpoll.listen():
+        if event.type != VkEventType.MESSAGE_NEW or not event.to_me:
+            continue
+        vk_id = event.user_id
+
+        # Извлекаем фото из вложений
+        attachments = getattr(event, "attachments", {})
+        photo_url = None
+        # В VkLongPoll фото приходит как attach1_type=photo, attach1=photo{owner}_{id}
+        for i in range(1, 11):
+            att_type = attachments.get(f"attach{i}_type", "")
+            if att_type == "photo":
+                # Нужно получить URL через API
+                att_value = attachments.get(f"attach{i}", "")
+                if "_" in att_value:
+                    parts = att_value.replace("photo", "").split("_")
+                    if len(parts) == 2:
+                        try:
+                            photos = vk.photos.getById(photos=att_value)
+                            if photos:
+                                sizes = photos[0].get("sizes", [])
+                                if sizes:
+                                    best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
+                                    photo_url = best.get("url")
+                        except Exception as e:
+                            print(f"[VK] get photo error: {e}")
+                break
+
+        text = event.text or ""
+
+        try:
+            if photo_url:
+                handle_photo(vk, upload, group_id, vk_id, photo_url)
+                if text:
+                    handle_text(vk, upload, group_id, vk_id, text, event)
+            elif text:
+                handle_text(vk, upload, group_id, vk_id, text, event)
+        except Exception as e:
+            print(f"[main] error for vk_id={vk_id}: {e}")
+            try:
+                send(vk, vk_id, "❌ Произошла ошибка. Попробуйте снова.", keyboard=kb_main())
+            except Exception:
+                pass
+
+
+if __name__ == "__main__":
+    main()
