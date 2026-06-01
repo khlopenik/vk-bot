@@ -9,7 +9,7 @@ import threading
 import json
 import requests
 import vk_api
-from vk_api.longpoll import VkLongPoll, VkEventType
+from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 from vk_api import VkUpload
 from typing import Optional
@@ -655,38 +655,26 @@ def main():
         t.start()
         print(f"✅ Flask webhook на порту {port}")
 
-    longpoll = VkLongPoll(vk_session)
+    longpoll = VkBotLongPoll(vk_session, group_id)
     print("🔄 Long Poll запущен, жду сообщений...")
 
     for event in longpoll.listen():
-        if event.type != VkEventType.MESSAGE_NEW or not event.to_me:
+        if event.type != VkBotEventType.MESSAGE_NEW:
             continue
-        vk_id = event.user_id
+
+        msg = event.object.message
+        vk_id = msg["from_id"]
+        text = msg.get("text", "")
 
         # Извлекаем фото из вложений
-        attachments = getattr(event, "attachments", {})
         photo_url = None
-        # В VkLongPoll фото приходит как attach1_type=photo, attach1=photo{owner}_{id}
-        for i in range(1, 11):
-            att_type = attachments.get(f"attach{i}_type", "")
-            if att_type == "photo":
-                # Нужно получить URL через API
-                att_value = attachments.get(f"attach{i}", "")
-                if "_" in att_value:
-                    parts = att_value.replace("photo", "").split("_")
-                    if len(parts) == 2:
-                        try:
-                            photos = vk.photos.getById(photos=att_value)
-                            if photos:
-                                sizes = photos[0].get("sizes", [])
-                                if sizes:
-                                    best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
-                                    photo_url = best.get("url")
-                        except Exception as e:
-                            print(f"[VK] get photo error: {e}")
+        for att in msg.get("attachments", []):
+            if att.get("type") == "photo":
+                sizes = att["photo"].get("sizes", [])
+                if sizes:
+                    best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
+                    photo_url = best.get("url")
                 break
-
-        text = event.text or ""
 
         try:
             if photo_url:
