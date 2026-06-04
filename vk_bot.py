@@ -655,40 +655,48 @@ def main():
         t.start()
         print(f"✅ Flask webhook на порту {port}")
 
-    longpoll = VkBotLongPoll(vk_session, group_id)
-    print("🔄 Long Poll запущен, жду сообщений...")
-
-    for event in longpoll.listen():
-        if event.type != VkBotEventType.MESSAGE_NEW:
-            continue
-
-        msg = event.object.message
-        vk_id = msg["from_id"]
-        text = msg.get("text", "")
-
-        # Извлекаем фото из вложений
-        photo_url = None
-        for att in msg.get("attachments", []):
-            if att.get("type") == "photo":
-                sizes = att["photo"].get("sizes", [])
-                if sizes:
-                    best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
-                    photo_url = best.get("url")
-                break
-
+    while True:
         try:
-            if photo_url:
-                handle_photo(vk, upload, group_id, vk_id, photo_url)
-                if text:
-                    handle_text(vk, upload, group_id, vk_id, text, event)
-            elif text:
-                handle_text(vk, upload, group_id, vk_id, text, event)
+            print(f"🔄 Инициализация Long Poll (group_id={group_id})...")
+            longpoll = VkBotLongPoll(vk_session, group_id)
+            print("🔄 Long Poll запущен, жду сообщений...")
+
+            for event in longpoll.listen():
+                if event.type != VkBotEventType.MESSAGE_NEW:
+                    continue
+
+                msg = event.object.message
+                vk_id = msg["from_id"]
+                text = msg.get("text", "")
+
+                # Извлекаем фото из вложений
+                photo_url = None
+                for att in msg.get("attachments", []):
+                    if att.get("type") == "photo":
+                        sizes = att["photo"].get("sizes", [])
+                        if sizes:
+                            best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
+                            photo_url = best.get("url")
+                        break
+
+                try:
+                    if photo_url:
+                        handle_photo(vk, upload, group_id, vk_id, photo_url)
+                        if text:
+                            handle_text(vk, upload, group_id, vk_id, text, event)
+                    elif text:
+                        handle_text(vk, upload, group_id, vk_id, text, event)
+                except Exception as e:
+                    print(f"[main] error for vk_id={vk_id}: {e}")
+                    try:
+                        send(vk, vk_id, "❌ Произошла ошибка. Попробуйте снова.", keyboard=kb_main())
+                    except Exception:
+                        pass
+
         except Exception as e:
-            print(f"[main] error for vk_id={vk_id}: {e}")
-            try:
-                send(vk, vk_id, "❌ Произошла ошибка. Попробуйте снова.", keyboard=kb_main())
-            except Exception:
-                pass
+            print(f"❌ Long Poll error: {type(e).__name__}: {e}")
+            print("⏳ Перезапуск через 5 секунд...")
+            time.sleep(5)
 
 
 if __name__ == "__main__":
