@@ -631,7 +631,16 @@ def main():
         print("❌ VK_TOKEN не задан в env!")
         return
 
-    vk_session = vk_api.VkApi(token=VK_TOKEN)
+    # requests.Session без таймаута может зависнуть навсегда на сетевом запросе —
+    # патчим session.request, чтобы всегда был дефолтный timeout.
+    _http = requests.Session()
+    _orig_request = _http.request
+    def _request_with_timeout(method, url, **kwargs):
+        kwargs.setdefault("timeout", 30)
+        return _orig_request(method, url, **kwargs)
+    _http.request = _request_with_timeout
+
+    vk_session = vk_api.VkApi(token=VK_TOKEN, session=_http)
     vk = vk_session.get_api()
     upload = VkUpload(vk_session)
 
@@ -658,7 +667,7 @@ def main():
     while True:
         try:
             print(f"🔄 Инициализация Long Poll (group_id={group_id})...")
-            longpoll = VkBotLongPoll(vk_session, group_id)
+            longpoll = VkBotLongPoll(vk_session, group_id, wait=25)
             print("🔄 Long Poll запущен, жду сообщений...")
 
             for event in longpoll.listen():
