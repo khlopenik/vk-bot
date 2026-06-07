@@ -671,6 +671,7 @@ def main():
             print("🔄 Long Poll запущен, жду сообщений...")
 
             for event in longpoll.listen():
+                print(f"📩 Событие: {event.type}")
                 if event.type != VkBotEventType.MESSAGE_NEW:
                     continue
 
