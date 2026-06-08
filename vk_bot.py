@@ -607,6 +607,126 @@ def make_flask_app(vk):
 
     app = Flask(__name__)
 
+    @app.after_request
+    def _cors(resp):
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        return resp
+
+    @app.route("/api/<path:_p>", methods=["OPTIONS"])
+    def _api_opts(_p):
+        return jsonify(ok=True)
+
+    # ── Mini App API ──────────────────────────────────────────────────────
+    @app.route("/api/me", methods=["GET"])
+    def api_me():
+        try:
+            vk_id = int(freq.args.get("vk_id", "0"))
+        except ValueError:
+            return jsonify(error="bad vk_id"), 400
+        if not vk_id:
+            return jsonify(error="vk_id required"), 400
+        u = get_user(vk_id)
+        return jsonify(
+            vk_id=vk_id,
+            std_credits=u.get("std_credits", 0),
+            v2_credits=u.get("v2_credits", 0),
+            pro_credits=u.get("pro_credits", 0),
+            diamond_credits=u.get("diamond_credits", 0),
+            gift_credits=u.get("gift_credits", 0),
+        )
+
+    @app.route("/api/tariffs", methods=["GET"])
+    def api_tariffs():
+        out = []
+        for key, t in TARIFF_PRICES.items():
+            label, ctype, amount, price = t
+            out.append({"key": key, "label": label, "amount": amount, "price": price})
+        return jsonify(tariffs=out)
+
+    @app.route("/api/models", methods=["GET"])
+    def api_models():
+        gallery = [{"key": k, "label": v[3]} for k, v in GALLERY_MODELS.items()]
+        diamond = [{"key": k, "label": v[2], "cost": v[1]} for k, v in DIAMOND_MODELS.items()]
+        return jsonify(gallery=gallery, diamond=diamond)
+
+    @app.route("/api/history", methods=["GET"])
+    def api_history():
+        try:
+            vk_id = int(freq.args.get("vk_id", "0"))
+        except ValueError:
+            return jsonify(error="bad vk_id"), 400
+        if not vk_id or not SUPABASE_URL:
+            return jsonify(history=[])
+        try:
+            r = requests.get(
+                f"{SUPABASE_URL}/rest/v1/generation_history",
+                headers=_sb_headers(),
+                params={"user_id": f"eq.{_db_id(vk_id)}",
+                        "select": "prompt,result_url,created_at",
+                        "order": "created_at.desc",
+                        "limit": "30"},
+                timeout=15,
+            )
+            return jsonify(history=r.json() if r.ok else [])
+        except Exception as e:
+            print(f"[API] history error: {e}")
+            return jsonify(history=[])
+
+    @app.route("/api/pay", methods=["POST"])
+    def api_pay():
+        data = freq.get_json(silent=True) or {}
+        try:
+            vk_id = int(data.get("vk_id", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="bad vk_id"), 400
+        tariff_key = data.get("tariff")
+        if not vk_id or not tariff_key:
+            return jsonify(error="vk_id and tariff required"), 400
+        link = create_yookassa_link(vk_id, tariff_key)
+        if not link:
+            return jsonify(error="payment link error"), 500
+        return jsonify(confirmation_url=link)
+
+    @app.route("/api/generate", methods=["POST"])
+    def api_generate():
+        data = freq.get_json(silent=True) or {}
+        try:
+            vk_id = int(data.get("vk_id", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="bad vk_id"), 400
+        photo_url  = data.get("photo_url")
+        model_key  = data.get("model_key")
+        prompt     = data.get("prompt", "") or ""
+        if not (vk_id and photo_url and model_key):
+            return jsonify(error="vk_id, photo_url, model_key required"), 400
+
+        if model_key in DIAMOND_MODELS:
+            slug, cost, label = DIAMOND_MODELS[model_key]
+            param_name, supports_image = "image_url", True
+        elif model_key in GALLERY_MODELS:
+            slug, param_name, supports_image, label = GALLERY_MODELS[model_key]
+        else:
+            return jsonify(error="unknown model"), 400
+
+        if not has_credits(vk_id, model_key):
+            return jsonify(error="no_credits"), 402
+
+        try:
+            req_id = start_generation(prompt, slug, photo_url, param_name)
+            if not req_id:
+                return jsonify(error="generation_start_failed"), 500
+            result_url = poll_result(req_id)
+            if not result_url or result_url == FAILED_SENTINEL:
+                return jsonify(error="generation_failed"), 500
+            deduct_credit(vk_id, model_key)
+            _save_history(vk_id, prompt, result_url)
+            return jsonify(result_url=result_url)
+        except Exception as e:
+            print(f"[API] generate error: {e}")
+            return jsonify(error="internal_error"), 500
+
     @app.route("/yookassa-webhook-vk", methods=["POST"])
     def yk_webhook():
         data = freq.get_json(silent=True) or {}
