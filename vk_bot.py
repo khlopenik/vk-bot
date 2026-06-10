@@ -291,12 +291,16 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
 # ─── Клавиатуры ───────────────────────────────────────────────────────────────
 def kb_main() -> str:
     kb = VkKeyboard(one_time=False)
-    kb.add_button("📸 Генерация фото", VkKeyboardColor.PRIMARY)
+    kb.add_button("🎨 Новичок", VkKeyboardColor.PRIMARY)
+    kb.add_button("🔥 Профессионал", VkKeyboardColor.POSITIVE)
     kb.add_line()
-    kb.add_button("💳 Баланс", VkKeyboardColor.SECONDARY)
-    kb.add_button("🛒 Купить кредиты", VkKeyboardColor.POSITIVE)
+    kb.add_button("👤 Профиль", VkKeyboardColor.SECONDARY)
+    kb.add_button("💎 Мой тариф", VkKeyboardColor.SECONDARY)
+    kb.add_button("💬 Поддержка", VkKeyboardColor.SECONDARY)
     kb.add_line()
-    kb.add_button("ℹ️ О боте", VkKeyboardColor.SECONDARY)
+    kb.add_button("📄 Оферта и правила", VkKeyboardColor.SECONDARY)
+    kb.add_line()
+    kb.add_openlink_button("🪄 Открыть приложение", "https://vk.com/app54628838")
     return kb.get_keyboard()
 
 def kb_model_choice() -> str:
@@ -409,12 +413,46 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
              keyboard=kb_main())
         return
 
-    if "открыть приложение" in t:
+    if t in ("🎨 новичок", "новичок"):
         u["waiting_for"] = None
         send(vk, vk_id,
-             "Открыть мини-приложение FRAME:\n\n"
-             "https://vk.com/app54628838\n\n"
-             "Нажми ссылку выше — откроется прямо в VK",
+             "🎨 Новичок — стандартные модели:\n\n"
+             "Нажми «📸 Генерация фото» и отправь своё фото.\n"
+             "Доступны модели: ⭐ Стандарт, ✨ Версия 2, 💎 Про",
+             keyboard=kb_main())
+        return
+
+    if t in ("🔥 профессионал", "профессионал"):
+        u["waiting_for"] = None
+        send(vk, vk_id,
+             "🔥 Профессионал — алмазные модели:\n\n"
+             "Нажми «📸 Генерация фото» и выбери «🔷 Профи (алмазы)».\n"
+             "Доступны: GPT-4o, Flux Pro, PuLID и другие",
+             keyboard=kb_main())
+        return
+
+    if t in ("👤 профиль", "профиль"):
+        u["waiting_for"] = None
+        send(vk, vk_id, credits_text(vk_id), keyboard=kb_main())
+        return
+
+    if t in ("💎 мой тариф", "мой тариф"):
+        u["waiting_for"] = "tariff_select"
+        send(vk, vk_id, "Выберите тариф:", keyboard=kb_tariffs_basic())
+        return
+
+    if t in ("💬 поддержка", "поддержка"):
+        u["waiting_for"] = None
+        send(vk, vk_id,
+             "💬 Поддержка:\n\nvk.com/club239444342\n\nНапишите нам в сообщения сообщества.",
+             keyboard=kb_main())
+        return
+
+    if t in ("📄 оферта и правила", "оферта и правила", "оферта"):
+        u["waiting_for"] = None
+        send(vk, vk_id,
+             "📄 Оферта и правила:\n\nПользуясь ботом, вы соглашаетесь с правилами сервиса FRAME.\n"
+             "По вопросам: vk.com/club239444342",
              keyboard=kb_main())
         return
 
