@@ -290,15 +290,19 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
 
 # ─── Клавиатуры ───────────────────────────────────────────────────────────────
 def kb_main() -> str:
-    kb = VkKeyboard(one_time=False)
-    kb.add_button("📸 Генерация фото", VkKeyboardColor.PRIMARY)
-    kb.add_line()
-    kb.add_button("💳 Баланс", VkKeyboardColor.SECONDARY)
-    kb.add_button("🛒 Купить кредиты", VkKeyboardColor.POSITIVE)
-    kb.add_line()
-    kb.add_button("🪄 Открыть приложение", VkKeyboardColor.SECONDARY)
-    kb.add_button("ℹ️ О боте", VkKeyboardColor.SECONDARY)
-    return kb.get_keyboard()
+    return json.dumps({
+        "one_time": False,
+        "inline": False,
+        "buttons": [[{
+            "action": {
+                "type": "open_app",
+                "label": "🪄 Открыть FRAME",
+                "app_id": 54628838,
+                "owner_id": -239444342,
+                "hash": "",
+            }
+        }]]
+    }, ensure_ascii=False)
 
 def kb_model_choice() -> str:
     kb = VkKeyboard(one_time=True)
@@ -352,7 +356,15 @@ def send(vk, peer_id: int, text: str, keyboard: str = None, attachment: str = No
         kwargs["keyboard"] = keyboard
     if attachment:
         kwargs["attachment"] = attachment
-    vk.messages.send(**kwargs)
+    try:
+        vk.messages.send(**kwargs)
+    except Exception as e:
+        if keyboard:
+            print(f"[send] keyboard rejected ({e}), retrying without keyboard")
+            kwargs.pop("keyboard")
+            vk.messages.send(**kwargs)
+        else:
+            raise
 
 def get_photo_url(vk, event) -> Optional[str]:
     """Извлекаем URL максимального размера из вложений фото."""
