@@ -297,7 +297,15 @@ def kb_main() -> str:
     kb.add_button("🛒 Купить кредиты", VkKeyboardColor.POSITIVE)
     kb.add_line()
     kb.add_button("ℹ️ О боте", VkKeyboardColor.SECONDARY)
-    return kb.get_keyboard()
+    kb_dict = json.loads(kb.get_keyboard())
+    kb_dict["buttons"].append([{
+        "action": {
+            "type": "open_link",
+            "label": "🪄 Открыть приложение",
+            "link": "https://vk.com/app54628838",
+        }
+    }])
+    return json.dumps(kb_dict, ensure_ascii=False)
 
 def kb_model_choice() -> str:
     kb = VkKeyboard(one_time=True)
