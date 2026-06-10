@@ -782,6 +782,87 @@ def make_flask_app(vk):
             print(f"[API] generate error: {e}")
             return jsonify(error="internal_error"), 500
 
+    # ── Gallery API (shared Supabase — same data as TG mini app) ─────────────
+
+    @app.route("/api/categories", methods=["GET"])
+    def api_categories():
+        if not SUPABASE_URL:
+            return jsonify([])
+        try:
+            r = requests.get(
+                f"{SUPABASE_URL}/rest/v1/gallery_categories",
+                headers=_sb_headers(),
+                params={"order": "sort_order.asc", "select": "cat_key,cat_name"},
+                timeout=10,
+            )
+            result = []
+            for row in (r.json() if r.ok else []):
+                name = row.get("cat_name", "")
+                parts = name.split(" ", 1)
+                if len(parts) == 2 and len(parts[0]) <= 3:
+                    emoji, label = parts[0], parts[1]
+                else:
+                    emoji, label = "📁", name
+                result.append({"key": row["cat_key"], "emoji": emoji, "name": label})
+            return jsonify(result)
+        except Exception as e:
+            print(f"[API] categories error: {e}")
+            return jsonify([])
+
+    @app.route("/api/styles/<category_key>", methods=["GET"])
+    def api_styles(category_key):
+        if not SUPABASE_URL:
+            return jsonify([])
+        try:
+            params = {
+                "active": "eq.true",
+                "order":  "sort_order.asc",
+                "select": "id,name,prompt,photo_url,input_label,photo_count,photo_hint,collage_example_url,quality_modes,category_key",
+            }
+            if category_key != "all":
+                params["category_key"] = f"eq.{category_key}"
+            r = requests.get(
+                f"{SUPABASE_URL}/rest/v1/styles",
+                headers=_sb_headers(),
+                params=params,
+                timeout=10,
+            )
+            styles = r.json() if r.ok else []
+            return jsonify(styles)
+        except Exception as e:
+            print(f"[API] styles error: {e}")
+            return jsonify([])
+
+    @app.route("/api/style-one/<int:style_id>", methods=["GET"])
+    def api_style_one(style_id):
+        if not SUPABASE_URL:
+            return jsonify(ok=False), 404
+        try:
+            r = requests.get(
+                f"{SUPABASE_URL}/rest/v1/styles",
+                headers={**_sb_headers(), "Accept": "application/vnd.pgrst.object+json"},
+                params={"id": f"eq.{style_id}"},
+                timeout=10,
+            )
+            s = r.json() if r.ok else {}
+            if not s or "id" not in s:
+                return jsonify(ok=False), 404
+            return jsonify(
+                ok=True,
+                id=s.get("id"),
+                name=s.get("name", ""),
+                photo_url=s.get("photo_url", ""),
+                input_label=s.get("input_label", ""),
+                photo_count=s.get("photo_count", 1) or 1,
+                photo_hint=s.get("photo_hint", ""),
+                collage_example_url=s.get("collage_example_url", ""),
+                quality_modes=s.get("quality_modes", "std,v2,pro") or "std,v2,pro",
+                category_key=s.get("category_key", ""),
+            )
+        except Exception as e:
+            print(f"[API] style-one error: {e}")
+            return jsonify(ok=False), 500
+
     @app.route("/yookassa-webhook-vk", methods=["POST"])
     def yk_webhook():
         data = freq.get_json(silent=True) or {}
