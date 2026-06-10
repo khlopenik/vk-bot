@@ -289,9 +289,6 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
         return None
 
 # ─── Клавиатуры ───────────────────────────────────────────────────────────────
-VK_MINIAPP_ID = 54628838
-VK_MINIAPP_HASH = "miniapp"
-
 def kb_main() -> str:
     kb = VkKeyboard(one_time=False)
     kb.add_button("📸 Генерация фото", VkKeyboardColor.PRIMARY)
@@ -300,17 +297,7 @@ def kb_main() -> str:
     kb.add_button("🛒 Купить кредиты", VkKeyboardColor.POSITIVE)
     kb.add_line()
     kb.add_button("ℹ️ О боте", VkKeyboardColor.SECONDARY)
-    kb_dict = json.loads(kb.get_keyboard())
-    kb_dict["buttons"].append([{
-        "action": {
-            "type": "open_app",
-            "app_id": VK_MINIAPP_ID,
-            "owner_id": -239444342,
-            "label": "🪄 Открыть приложение FRAME",
-            "hash": VK_MINIAPP_HASH,
-        }
-    }])
-    return json.dumps(kb_dict, ensure_ascii=False)
+    return kb.get_keyboard()
 
 def kb_model_choice() -> str:
     kb = VkKeyboard(one_time=True)
