@@ -290,19 +290,14 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
 
 # ─── Клавиатуры ───────────────────────────────────────────────────────────────
 def kb_main() -> str:
-    return json.dumps({
-        "one_time": False,
-        "inline": False,
-        "buttons": [[{
-            "action": {
-                "type": "open_app",
-                "label": "🪄 Открыть FRAME",
-                "app_id": 54628838,
-                "owner_id": -239444342,
-                "hash": "",
-            }
-        }]]
-    }, ensure_ascii=False)
+    kb = VkKeyboard(one_time=False)
+    kb.add_button("📸 Генерация фото", VkKeyboardColor.PRIMARY)
+    kb.add_line()
+    kb.add_button("💳 Баланс", VkKeyboardColor.SECONDARY)
+    kb.add_button("🛒 Купить кредиты", VkKeyboardColor.POSITIVE)
+    kb.add_line()
+    kb.add_button("ℹ️ О боте", VkKeyboardColor.SECONDARY)
+    return kb.get_keyboard()
 
 def kb_model_choice() -> str:
     kb = VkKeyboard(one_time=True)
@@ -409,8 +404,8 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
             u["pd_consent"] = True
         send(vk, vk_id,
              "👋 Привет! Я FRAME — бот AI-фотосессий.\n\n"
-             "Загружу твоё фото и обработаю нейросетью в любом стиле.\n\n"
-             "Выбери действие:",
+             "📱 Открыть приложение: vk.com/app54628838\n\n"
+             "Или работай прямо здесь — выбери действие:",
              keyboard=kb_main())
         return
 
