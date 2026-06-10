@@ -296,16 +296,9 @@ def kb_main() -> str:
     kb.add_button("💳 Баланс", VkKeyboardColor.SECONDARY)
     kb.add_button("🛒 Купить кредиты", VkKeyboardColor.POSITIVE)
     kb.add_line()
+    kb.add_button("🪄 Открыть приложение", VkKeyboardColor.SECONDARY)
     kb.add_button("ℹ️ О боте", VkKeyboardColor.SECONDARY)
-    kb_dict = json.loads(kb.get_keyboard())
-    kb_dict["buttons"].append([{
-        "action": {
-            "type": "open_link",
-            "label": "🪄 Открыть приложение",
-            "link": "https://vk.com/app54628838",
-        }
-    }])
-    return json.dumps(kb_dict, ensure_ascii=False)
+    return kb.get_keyboard()
 
 def kb_model_choice() -> str:
     kb = VkKeyboard(one_time=True)
@@ -406,6 +399,15 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
              "👋 Привет! Я FRAME — бот AI-фотосессий.\n\n"
              "Загружу твоё фото и обработаю нейросетью в любом стиле.\n\n"
              "Выбери действие:",
+             keyboard=kb_main())
+        return
+
+    if "открыть приложение" in t:
+        u["waiting_for"] = None
+        send(vk, vk_id,
+             "Открыть мини-приложение FRAME:\n\n"
+             "https://vk.com/app54628838\n\n"
+             "Нажми ссылку выше — откроется прямо в VK",
              keyboard=kb_main())
         return
 
