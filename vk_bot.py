@@ -289,18 +289,18 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
         return None
 
 # ─── Клавиатуры ───────────────────────────────────────────────────────────────
+MINIAPP_URL = "https://frame-vk-miniapp.onrender.com"
+
 def kb_main() -> str:
     kb = VkKeyboard(one_time=False)
-    kb.add_button("🎨 Новичок", VkKeyboardColor.PRIMARY)
-    kb.add_button("🔥 Профессионал", VkKeyboardColor.POSITIVE)
+    kb.add_openlink_button("📸 Новичок",      f"{MINIAPP_URL}/#novichok")
+    kb.add_openlink_button("🔥 Профессионал", f"{MINIAPP_URL}/#profi")
     kb.add_line()
-    kb.add_button("👤 Профиль", VkKeyboardColor.SECONDARY)
-    kb.add_button("💎 Мой тариф", VkKeyboardColor.SECONDARY)
-    kb.add_button("💬 Поддержка", VkKeyboardColor.SECONDARY)
+    kb.add_openlink_button("👤 Профиль",  f"{MINIAPP_URL}/#profile")
+    kb.add_button("💎 Мой тариф",    VkKeyboardColor.SECONDARY)
+    kb.add_button("💬 Поддержка",    VkKeyboardColor.SECONDARY)
     kb.add_line()
     kb.add_button("📄 Оферта и правила", VkKeyboardColor.SECONDARY)
-    kb.add_line()
-    kb.add_openlink_button("🪄 Открыть приложение", "https://vk.com/app54628838")
     return kb.get_keyboard()
 
 def kb_model_choice() -> str:
