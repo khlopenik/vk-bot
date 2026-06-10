@@ -289,19 +289,49 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
         return None
 
 # ─── Клавиатуры ───────────────────────────────────────────────────────────────
-MINIAPP_URL = "https://frame-vk-miniapp.onrender.com"
+MINIAPP_URL  = "https://frame-vk-miniapp.onrender.com"
+VK_APP_ID    = 54628838
+VK_GROUP_ID  = 239444342   # числовой ID сообщества
 
 def kb_main() -> str:
-    kb = VkKeyboard(one_time=False)
-    kb.add_openlink_button("📸 Новичок",      f"{MINIAPP_URL}/#novichok")
-    kb.add_openlink_button("🔥 Профессионал", f"{MINIAPP_URL}/#profi")
-    kb.add_line()
-    kb.add_openlink_button("👤 Профиль",  f"{MINIAPP_URL}/#profile")
-    kb.add_button("💎 Мой тариф",    VkKeyboardColor.SECONDARY)
-    kb.add_button("💬 Поддержка",    VkKeyboardColor.SECONDARY)
-    kb.add_line()
-    kb.add_button("📄 Оферта и правила", VkKeyboardColor.SECONDARY)
-    return kb.get_keyboard()
+    """
+    Главная клавиатура.
+    Первая строка — open_app (открывает мини-апп прямо внутри VK).
+    Остальные — стандартные текстовые кнопки.
+    """
+    keyboard = {
+        "one_time": False,
+        "buttons": [
+            # Строка 1 — кнопка мини-аппа (открывается внутри VK)
+            [
+                {
+                    "action": {
+                        "type":     "open_app",
+                        "app_id":   VK_APP_ID,
+                        "owner_id": -VK_GROUP_ID,
+                        "label":    "✨ Открыть приложение",
+                        "hash":     "",
+                    }
+                }
+            ],
+            # Строка 2
+            [
+                {"action": {"type": "text", "label": "📸 Новичок"},      "color": "secondary"},
+                {"action": {"type": "text", "label": "🔥 Профессионал"}, "color": "secondary"},
+            ],
+            # Строка 3
+            [
+                {"action": {"type": "text", "label": "👤 Профиль"},           "color": "secondary"},
+                {"action": {"type": "text", "label": "💎 Мой тариф"},         "color": "secondary"},
+                {"action": {"type": "text", "label": "💬 Поддержка"},         "color": "secondary"},
+            ],
+            # Строка 4
+            [
+                {"action": {"type": "text", "label": "📄 Оферта и правила"}, "color": "secondary"},
+            ],
+        ]
+    }
+    return json.dumps(keyboard, ensure_ascii=False)
 
 def kb_model_choice() -> str:
     kb = VkKeyboard(one_time=True)
