@@ -458,7 +458,7 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
     t = text.strip().lower()
 
     # ── Команды навигации (сбрасывают waiting_for) ───────────────────────────
-    if t in ("начать", "старт", "/start", "привет", "start"):
+    if t in ("начать", "старт", "/start", "привет", "start", "🔙 главное меню", "главное меню", "меню"):
         u["waiting_for"] = None
         if not u.get("pd_consent"):
             u["pd_consent"] = True
@@ -470,23 +470,27 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
         return
 
     SECTION_LINKS = {
-        "⭐ новичок": ("novichok", "⭐ Новичок"),
-        "новичок":    ("novichok", "⭐ Новичок"),
-        "💎 профи":   ("profi",    "💎 Профи"),
-        "профи":      ("profi",    "💎 Профи"),
-        "профессионал": ("profi",  "💎 Профи"),
-        "🛒 тарифы":  ("tariffs",  "🛒 Тарифы"),
-        "тарифы":     ("tariffs",  "🛒 Тарифы"),
-        "👤 профиль": ("profile",  "👤 Профиль"),
-        "профиль":    ("profile",  "👤 Профиль"),
+        "⭐ новичок":   ("novichok", "⭐ Открыть «Новичок»"),
+        "новичок":      ("novichok", "⭐ Открыть «Новичок»"),
+        "💎 профи":     ("profi",    "💎 Открыть «Профи»"),
+        "профи":        ("profi",    "💎 Открыть «Профи»"),
+        "профессионал": ("profi",    "💎 Открыть «Профи»"),
+        "🛒 тарифы":   ("tariffs",  "🛒 Открыть «Тарифы»"),
+        "тарифы":       ("tariffs",  "🛒 Открыть «Тарифы»"),
+        "👤 профиль":  ("profile",  "👤 Открыть «Профиль»"),
+        "профиль":      ("profile",  "👤 Открыть «Профиль»"),
     }
     if t in SECTION_LINKS:
         u["waiting_for"] = None
-        hash_val, section_name = SECTION_LINKS[t]
-        send(vk, vk_id,
-             f"👆 Открой раздел «{section_name}» прямо в приложении:\n"
-             f"vk.com/app{VK_APP_ID}#!{hash_val}",
-             keyboard=kb_main())
+        hash_val, btn_label = SECTION_LINKS[t]
+        kb_section = json.dumps({
+            "one_time": True,
+            "buttons": [
+                [_open_app_btn(btn_label, hash_val)],
+                [{"action": {"type": "text", "label": "🔙 Главное меню"}, "color": "secondary"}],
+            ]
+        }, ensure_ascii=False)
+        send(vk, vk_id, "👇", keyboard=kb_section)
         return
 
     if t in ("💎 мой тариф", "мой тариф", "💳 мой счёт", "мой счёт", "баланс", "balance"):
