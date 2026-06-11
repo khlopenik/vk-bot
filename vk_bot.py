@@ -457,6 +457,28 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
     u = get_user(vk_id)
     t = text.strip().lower()
 
+    # ── Команды администратора ────────────────────────────────────────────────
+    if vk_id == ADMIN_VK_ID:
+        # /add 50std — начислить себе кредиты без оплаты
+        if t.startswith("/add "):
+            parts = t[5:].strip().split()
+            try:
+                amount = int(parts[0])
+                ctype  = parts[1] if len(parts) > 1 else "std"
+                key = CREDIT_KEY.get(ctype, ctype + "_credits")
+                u[key] = u.get(key, 0) + amount
+                _save_credits_to_db(vk_id)
+                send(vk, vk_id, f"✅ Начислено: +{amount} [{ctype}]\n\n{credits_text(vk_id)}", keyboard=kb_main())
+            except Exception as e:
+                send(vk, vk_id, f"❌ Ошибка: {e}\nФормат: /add 50 std", keyboard=kb_main())
+            return
+        # /add_tariff trial — начислить тариф целиком
+        if t.startswith("/add_tariff "):
+            key = t[12:].strip()
+            msg = add_credits(vk_id, key)
+            send(vk, vk_id, f"✅ Тариф применён\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
+            return
+
     # ── Команды навигации (сбрасывают waiting_for) ───────────────────────────
     if t in ("начать", "старт", "/start", "привет", "start", "🔙 главное меню", "главное меню", "меню"):
         u["waiting_for"] = None
