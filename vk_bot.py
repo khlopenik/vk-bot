@@ -279,10 +279,11 @@ def credits_text(vk_id: int) -> str:
     return "\n".join(lines)
 
 # ─── YooKassa платёж ──────────────────────────────────────────────────────────
-def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
+def create_yookassa_link(vk_id: int, tariff_key: str):
+    """Возвращает (url, error_str). url=None если ошибка."""
     t = TARIFF_PRICES.get(tariff_key)
     if not t or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
-        return None
+        return None, "env_not_set"
     label, _, _, price = t
     discounted = int(price * 0.5)
     try:
@@ -303,14 +304,16 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
             timeout=15,
         )
         data = r.json()
-        print(f"[YK] status={r.status_code} response={str(data)[:300]}")
+        print(f"[YK] status={r.status_code} response={str(data)[:500]}")
         url = data.get("confirmation", {}).get("confirmation_url")
         if not url:
-            print(f"[YK] ❌ No confirmation_url in response: {data}")
-        return url
+            err = data.get("description") or data.get("code") or str(data)[:200]
+            print(f"[YK] ❌ No confirmation_url. YK error: {err}")
+            return None, err
+        return url, None
     except Exception as e:
         print(f"[YooKassa] error: {e}")
-        return None
+        return None, str(e)
 
 # ─── Клавиатуры ───────────────────────────────────────────────────────────────
 MINIAPP_URL  = "https://frame-vk-miniapp.onrender.com"
@@ -784,9 +787,9 @@ def make_flask_app(vk):
             return jsonify(error="unknown_tariff"), 400
 
         print(f"[PAY] Creating link vk_id={vk_id} tariff={tariff_key}")
-        link = create_yookassa_link(vk_id, tariff_key)
+        link, yk_err = create_yookassa_link(vk_id, tariff_key)
         if not link:
-            return jsonify(error="payment link error"), 500
+            return jsonify(error="payment_link_error", detail=yk_err), 500
         print(f"[PAY] ✅ Link created: {link[:60]}...")
         return jsonify(confirmation_url=link)
 
