@@ -354,8 +354,9 @@ def kb_main() -> str:
                 _open_app_btn("🕐 История",   "history"),
                 _open_app_btn("👤 Профиль",   "profile"),
             ],
-            # Строка 4 — поддержка текстом
+            # Строка 4 — текстовые кнопки
             [
+                {"action": {"type": "text", "label": "💳 Мой счёт"},  "color": "secondary"},
                 {"action": {"type": "text", "label": "💬 Поддержка"}, "color": "secondary"},
             ],
         ]
@@ -473,18 +474,36 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
         return
 
     if t in ("🎨 новичок", "новичок", "🔥 профессионал", "профессионал",
-             "👤 профиль", "профиль", "💎 мой тариф", "мой тариф"):
+             "👤 профиль", "профиль"):
         u["waiting_for"] = None
         send(vk, vk_id,
              "✨ Всё доступно в приложении FRAME — открой его кнопкой ниже 👇",
              keyboard=kb_main())
         return
 
+    if t in ("💎 мой тариф", "мой тариф", "💳 мой счёт", "мой счёт", "баланс", "balance"):
+        u["waiting_for"] = None
+        send(vk, vk_id, credits_text(vk_id), keyboard=kb_main())
+        return
+
     if t in ("💬 поддержка", "поддержка"):
         u["waiting_for"] = None
+        kb_support = json.dumps({
+            "one_time": True,
+            "buttons": [
+                [{"action": {"type": "open_link", "link": "https://vk.com/im?sel=l_khlopenik", "label": "💬 Написать Любови"}}],
+                [{"action": {"type": "text", "label": "🔙 Назад"}, "color": "secondary"}],
+            ]
+        }, ensure_ascii=False)
         send(vk, vk_id,
-             "💬 Поддержка:\n\nНапиши нам в сообщения сообщества — ответим быстро!\nvk.com/club239444342",
-             keyboard=kb_main())
+             "💬 Поддержка FRAME\n\n"
+             "Привет! Мы отвечаем быстро 🙌\n\n"
+             "По любому вопросу — напишите напрямую:\n"
+             "• Проблема с оплатой\n"
+             "• Вопрос по результату\n"
+             "• Хочу уточнить про тарифы\n\n"
+             "👇 Нажми кнопку ниже чтобы написать:",
+             keyboard=kb_support)
         return
 
     if t in ("📄 оферта и правила", "оферта и правила", "оферта"):
