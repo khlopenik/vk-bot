@@ -284,9 +284,84 @@ def credits_text(vk_id: int) -> str:
         lines.append("  Кредитов нет — купите тариф!")
     return "\n".join(lines)
 
+# ─── Динамические тарифы конструктора (build_) ────────────────────────────────
+def _builder_unit_price(cat: str, qty: int) -> int:
+    """Цена за единицу с учётом объёмной скидки (совпадает с фронтом)."""
+    if cat == "std":
+        if qty >= 50: return 39
+        if qty >= 30: return 49
+        if qty >= 10: return 59
+        return 79
+    if cat == "v2":
+        if qty >= 50: return 49
+        if qty >= 30: return 63
+        if qty >= 10: return 79
+        return 99
+    if cat == "pro":
+        if qty >= 50: return 80
+        if qty >= 30: return 83
+        if qty >= 10: return 119
+        return 149
+    if cat == "nude":
+        if qty >= 20: return 59
+        if qty >= 10: return 69
+        if qty >= 5:  return 78
+        if qty >= 3:  return 83
+        return 89
+    if cat == "family":
+        if qty >= 5: return 298
+        if qty >= 3: return 330
+        return 390
+    if cat == "video":
+        if qty >= 3: return 330
+        return 390
+    if cat == "couples":
+        if qty >= 10: return 119
+        if qty >= 5:  return 129
+        if qty >= 3:  return 139
+        return 149
+    return 0
+
+def ensure_dynamic_tariff(tariff_key: str) -> bool:
+    """Восстанавливает build_-тариф из ключа в TARIFF_PRICES. True если ключ валиден."""
+    if tariff_key in TARIFF_PRICES:
+        return True
+    # build_{std}_{v2}_{pro}_{nude}_{family}_{video}
+    if tariff_key.startswith("build_"):
+        parts = tariff_key.split("_")
+        if len(parts) == 7:
+            try:
+                std_q, v2_q, pro_q, nude_q, fam_q, vid_q = (int(x) for x in parts[1:])
+            except ValueError:
+                return False
+            total = (_builder_unit_price("std",    std_q) * std_q +
+                     _builder_unit_price("v2",     v2_q)  * v2_q  +
+                     _builder_unit_price("pro",    pro_q) * pro_q +
+                     _builder_unit_price("nude",   nude_q) * nude_q +
+                     _builder_unit_price("family", fam_q) * fam_q +
+                     _builder_unit_price("video",  vid_q) * vid_q)
+            if total <= 0:
+                return False
+            desc = []
+            ctype: dict = {}
+            for q, key, lbl in ((std_q,"std","стандарт"), (v2_q,"v2","версия 2"),
+                                 (pro_q,"pro","про"), (nude_q,"nude","ню"),
+                                 (fam_q,"family","семейных"), (vid_q,"video","оживлений")):
+                if q:
+                    desc.append(f"{q} {lbl}")
+                    ctype[key] = q
+            if not ctype:
+                return False
+            name = "🎛 Свой набор: " + " · ".join(desc)
+            TARIFF_PRICES[tariff_key] = (name, ctype, None, total)
+            return True
+        return False
+    return False
+
 # ─── YooKassa платёж ──────────────────────────────────────────────────────────
 def create_yookassa_link(vk_id: int, tariff_key: str):
     """Возвращает (url, error_str). url=None если ошибка."""
+    ensure_dynamic_tariff(tariff_key)
     t = TARIFF_PRICES.get(tariff_key)
     if not t or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
         return None, "env_not_set"
@@ -830,6 +905,7 @@ def make_flask_app(vk):
             return jsonify(error="payment_not_configured",
                            detail="YOKASSA_SHOP_ID / YOKASSA_KEY не заданы в Render env vars"), 503
 
+        ensure_dynamic_tariff(tariff_key)
         if tariff_key not in TARIFF_PRICES:
             print(f"[PAY] ❌ Unknown tariff_key: {tariff_key!r}")
             return jsonify(error="unknown_tariff"), 400
@@ -972,6 +1048,7 @@ def make_flask_app(vk):
         if not vk_id_str or not tariff_key:
             return jsonify(ok=True)
         vk_id = int(vk_id_str)
+        ensure_dynamic_tariff(tariff_key)
         msg = add_credits(vk_id, tariff_key)
         send(vk, vk_id, f"✅ Оплата получена!\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
         return jsonify(ok=True)
