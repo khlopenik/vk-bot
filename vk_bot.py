@@ -699,6 +699,10 @@ def make_flask_app(vk):
 
     app = Flask(__name__)
 
+    @app.route("/ping", methods=["GET"])
+    def _ping():
+        return jsonify({"ok": True}), 200
+
     @app.after_request
     def _cors(resp):
         resp.headers["Access-Control-Allow-Origin"] = "*"
