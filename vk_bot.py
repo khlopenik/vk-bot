@@ -265,6 +265,7 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
     if not t or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
         return None
     label, _, _, price = t
+    discounted = int(price * 0.5)
     try:
         import uuid
         r = requests.post(
@@ -273,7 +274,7 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
             headers={"Idempotence-Key": str(uuid.uuid4()),
                      "Content-Type": "application/json"},
             json={
-                "amount": {"value": str(price) + ".00", "currency": "RUB"},
+                "amount": {"value": str(discounted) + ".00", "currency": "RUB"},
                 "confirmation": {"type": "redirect",
                                  "return_url": "https://vk.com"},
                 "capture": True,
