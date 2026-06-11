@@ -488,22 +488,11 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
 
     if t in ("💬 поддержка", "поддержка"):
         u["waiting_for"] = None
-        kb_support = json.dumps({
-            "one_time": True,
-            "buttons": [
-                [{"action": {"type": "open_link", "link": "https://vk.com/im?sel=l_khlopenik", "label": "💬 Написать Любови"}}],
-                [{"action": {"type": "text", "label": "🔙 Назад"}, "color": "secondary"}],
-            ]
-        }, ensure_ascii=False)
         send(vk, vk_id,
              "💬 Поддержка FRAME\n\n"
-             "Привет! Мы отвечаем быстро 🙌\n\n"
-             "По любому вопросу — напишите напрямую:\n"
-             "• Проблема с оплатой\n"
-             "• Вопрос по результату\n"
-             "• Хочу уточнить про тарифы\n\n"
-             "👇 Нажми кнопку ниже чтобы написать:",
-             keyboard=kb_support)
+             "По любому вопросу — напишите напрямую в поддержку:\n"
+             "vk.com/l_khlopenik",
+             keyboard=kb_main())
         return
 
     if t in ("📄 оферта и правила", "оферта и правила", "оферта"):
