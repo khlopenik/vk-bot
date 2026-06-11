@@ -467,38 +467,18 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
              keyboard=kb_main())
         return
 
-    if t in ("🎨 новичок", "новичок"):
+    if t in ("🎨 новичок", "новичок", "🔥 профессионал", "профессионал",
+             "👤 профиль", "профиль", "💎 мой тариф", "мой тариф"):
         u["waiting_for"] = None
         send(vk, vk_id,
-             "🎨 Новичок — стандартные модели:\n\n"
-             "Нажми «📸 Генерация фото» и отправь своё фото.\n"
-             "Доступны модели: ⭐ Стандарт, ✨ Версия 2, 💎 Про",
+             "✨ Всё доступно в приложении FRAME — открой его кнопкой ниже 👇",
              keyboard=kb_main())
-        return
-
-    if t in ("🔥 профессионал", "профессионал"):
-        u["waiting_for"] = None
-        send(vk, vk_id,
-             "🔥 Профессионал — алмазные модели:\n\n"
-             "Нажми «📸 Генерация фото» и выбери «🔷 Профи (алмазы)».\n"
-             "Доступны: GPT-4o, Flux Pro, PuLID и другие",
-             keyboard=kb_main())
-        return
-
-    if t in ("👤 профиль", "профиль"):
-        u["waiting_for"] = None
-        send(vk, vk_id, credits_text(vk_id), keyboard=kb_main())
-        return
-
-    if t in ("💎 мой тариф", "мой тариф"):
-        u["waiting_for"] = "tariff_select"
-        send(vk, vk_id, "Выберите тариф:", keyboard=kb_tariffs_basic())
         return
 
     if t in ("💬 поддержка", "поддержка"):
         u["waiting_for"] = None
         send(vk, vk_id,
-             "💬 Поддержка:\n\nvk.com/club239444342\n\nНапишите нам в сообщения сообщества.",
+             "💬 Поддержка:\n\nНапиши нам в сообщения сообщества — ответим быстро!\nvk.com/club239444342",
              keyboard=kb_main())
         return
 
