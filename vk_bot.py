@@ -341,23 +341,19 @@ def kb_main() -> str:
     keyboard = {
         "one_time": False,
         "buttons": [
-            # Строка 1 — главная кнопка открытия
-            [_open_app_btn("✨ Открыть FRAME", "")],
-            # Строка 2 — разделы приложения
+            # Строка 1 — единственная open_app кнопка (ВК поддерживает только одну)
+            [_open_app_btn("✨ Открыть приложение FRAME", "")],
+            # Строка 2 — текстовые кнопки разделов
             [
-                _open_app_btn("⭐ Новичок",   "novichok"),
-                _open_app_btn("💎 Профи",     "profi"),
-                _open_app_btn("🛒 Тарифы",    "tariffs"),
+                {"action": {"type": "text", "label": "⭐ Новичок"},      "color": "secondary"},
+                {"action": {"type": "text", "label": "💎 Профи"},        "color": "secondary"},
+                {"action": {"type": "text", "label": "🛒 Тарифы"},       "color": "secondary"},
             ],
-            # Строка 3 — доп разделы
+            # Строка 3
             [
-                _open_app_btn("🕐 История",   "history"),
-                _open_app_btn("👤 Профиль",   "profile"),
-            ],
-            # Строка 4 — текстовые кнопки
-            [
-                {"action": {"type": "text", "label": "💳 Мой счёт"},  "color": "secondary"},
-                {"action": {"type": "text", "label": "💬 Поддержка"}, "color": "secondary"},
+                {"action": {"type": "text", "label": "💳 Мой счёт"},    "color": "secondary"},
+                {"action": {"type": "text", "label": "👤 Профиль"},      "color": "secondary"},
+                {"action": {"type": "text", "label": "💬 Поддержка"},    "color": "secondary"},
             ],
         ]
     }
@@ -473,11 +469,23 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
              keyboard=kb_main())
         return
 
-    if t in ("🎨 новичок", "новичок", "🔥 профессионал", "профессионал",
-             "👤 профиль", "профиль"):
+    SECTION_LINKS = {
+        "⭐ новичок": ("novichok", "⭐ Новичок"),
+        "новичок":    ("novichok", "⭐ Новичок"),
+        "💎 профи":   ("profi",    "💎 Профи"),
+        "профи":      ("profi",    "💎 Профи"),
+        "профессионал": ("profi",  "💎 Профи"),
+        "🛒 тарифы":  ("tariffs",  "🛒 Тарифы"),
+        "тарифы":     ("tariffs",  "🛒 Тарифы"),
+        "👤 профиль": ("profile",  "👤 Профиль"),
+        "профиль":    ("profile",  "👤 Профиль"),
+    }
+    if t in SECTION_LINKS:
         u["waiting_for"] = None
+        hash_val, section_name = SECTION_LINKS[t]
         send(vk, vk_id,
-             "✨ Всё доступно в приложении FRAME — открой его кнопкой ниже 👇",
+             f"👆 Открой раздел «{section_name}» прямо в приложении:\n"
+             f"vk.com/app{VK_APP_ID}#!{hash_val}",
              keyboard=kb_main())
         return
 
