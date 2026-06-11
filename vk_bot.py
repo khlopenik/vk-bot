@@ -555,7 +555,7 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
         if tariff_key:
             u["waiting_for"] = None
             price = TARIFF_PRICES[tariff_key][3]
-            link = create_yookassa_link(vk_id, tariff_key)
+            link, _ = create_yookassa_link(vk_id, tariff_key)
             if link:
                 send(vk, vk_id,
                      f"💳 Ссылка для оплаты {TARIFF_PRICES[tariff_key][0]} — {price}₽:\n\n{link}\n\n"
