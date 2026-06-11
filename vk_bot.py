@@ -283,7 +283,11 @@ def create_yookassa_link(vk_id: int, tariff_key: str) -> Optional[str]:
             timeout=15,
         )
         data = r.json()
-        return data.get("confirmation", {}).get("confirmation_url")
+        print(f"[YK] status={r.status_code} response={str(data)[:300]}")
+        url = data.get("confirmation", {}).get("confirmation_url")
+        if not url:
+            print(f"[YK] ❌ No confirmation_url in response: {data}")
+        return url
     except Exception as e:
         print(f"[YooKassa] error: {e}")
         return None
@@ -769,9 +773,21 @@ def make_flask_app(vk):
         tariff_key = data.get("tariff")
         if not vk_id or not tariff_key:
             return jsonify(error="vk_id and tariff required"), 400
+
+        if not YOKASSA_SHOP_ID or not YOKASSA_KEY:
+            print(f"[PAY] ❌ YOKASSA env vars not set! shop={bool(YOKASSA_SHOP_ID)} key={bool(YOKASSA_KEY)}")
+            return jsonify(error="payment_not_configured",
+                           detail="YOKASSA_SHOP_ID / YOKASSA_KEY не заданы в Render env vars"), 503
+
+        if tariff_key not in TARIFF_PRICES:
+            print(f"[PAY] ❌ Unknown tariff_key: {tariff_key!r}")
+            return jsonify(error="unknown_tariff"), 400
+
+        print(f"[PAY] Creating link vk_id={vk_id} tariff={tariff_key}")
         link = create_yookassa_link(vk_id, tariff_key)
         if not link:
             return jsonify(error="payment link error"), 500
+        print(f"[PAY] ✅ Link created: {link[:60]}...")
         return jsonify(confirmation_url=link)
 
     @app.route("/api/generate", methods=["POST"])
