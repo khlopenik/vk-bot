@@ -852,6 +852,45 @@ def make_flask_app(vk):
             gift_credits=u.get("gift_credits", 0),
         )
 
+    @app.route("/api/support", methods=["POST"])
+    def api_support():
+        data = freq.get_json(silent=True) or {}
+        try:
+            vk_id = int(data.get("vk_id", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="bad vk_id"), 400
+        if not vk_id:
+            return jsonify(error="vk_id required"), 400
+        kind = data.get("kind", "support")  # support | partner
+
+        # 1) пишем пользователю в личку — у него появится уведомление и откроется чат
+        try:
+            if kind == "partner":
+                send(vk, vk_id,
+                     "🤝 Партнёрская программа FRAME\n\n"
+                     "Спасибо за интерес! Приводи людей в FRAME и получай 30% "
+                     "с каждой их оплаты — навсегда. 🤑\n\n"
+                     "Напиши сюда «Хочу в партнёры» — и мы всё расскажем и подключим тебя.")
+            else:
+                send(vk, vk_id,
+                     "💬 Поддержка FRAME\n\n"
+                     "Опиши свой вопрос прямо здесь, в этом чате — "
+                     "и мы ответим в ближайшее время 🙌")
+        except Exception as e:
+            print(f"[SUPPORT] ⚠️ Could not message user {vk_id}: {e}")
+
+        # 2) уведомляем админа
+        if ADMIN_VK_ID:
+            try:
+                tag = "💰 ПАРТНЁРСТВО" if kind == "partner" else "💬 ПОДДЕРЖКА"
+                send(vk, ADMIN_VK_ID,
+                     f"🔔 {tag}\n\nПользователь vk.com/id{vk_id} нажал кнопку "
+                     f"«{'Стать партнёром' if kind == 'partner' else 'Написать в поддержку'}».")
+            except Exception as e:
+                print(f"[SUPPORT] ⚠️ Could not notify admin: {e}")
+
+        return jsonify(ok=True)
+
     @app.route("/api/tariffs", methods=["GET"])
     def api_tariffs():
         out = []
@@ -921,23 +960,17 @@ def make_flask_app(vk):
         sent_to_chat = False
         try:
             label = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
-            # Кнопка open_link — выглядит безопаснее ссылки. Чтобы была активной,
-            # домен yoomoney.ru должен быть в доверенных адресах приложения VK.
-            pay_kb = json.dumps({
-                "inline": True,
-                "buttons": [[
-                    {"action": {"type": "open_link", "link": link, "label": "💳 Оплатить"}}
-                ]],
-            }, ensure_ascii=False)
+            # Ссылка кликабельным текстом — VK сам делает её ссылкой и открывает
+            # в нормальном браузере. Кнопку open_link VK не даёт активировать для yoomoney.
             send(vk, vk_id,
                  f"💳 Оплата пакета: {label}\n\n"
-                 f"Нажми кнопку «Оплатить» ниже. "
-                 f"После оплаты алмазы зачислятся автоматически 💎",
-                 keyboard=pay_kb)
+                 f"👇 Нажми на ссылку ниже — откроется безопасная оплата через ЮKassa. "
+                 f"После оплаты алмазы зачислятся автоматически 💎\n\n"
+                 f"{link}")
             sent_to_chat = True
-            print(f"[PAY] ✉️ Pay button sent to chat vk_id={vk_id}")
+            print(f"[PAY] ✉️ Link sent to chat vk_id={vk_id}")
         except Exception as e:
-            print(f"[PAY] ⚠️ Could not send pay button: {e}")
+            print(f"[PAY] ⚠️ Could not send link: {e}")
 
         return jsonify(confirmation_url=link, sent_to_chat=sent_to_chat)
 
