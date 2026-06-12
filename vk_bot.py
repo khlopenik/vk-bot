@@ -913,18 +913,19 @@ def make_flask_app(vk):
             u = get_user(vk_id)
             already = u.get("is_partner", False)
             if not already:
-                # Записываем в Supabase
+                # Upsert — создаёт строку если нет, обновляет если есть
                 if SUPABASE_URL:
                     try:
-                        requests.patch(
+                        requests.post(
                             f"{SUPABASE_URL}/rest/v1/user_credits",
-                            headers={**_sb_headers(), "Prefer": "return=minimal"},
-                            params={"user_id": f"eq.{_db_id(vk_id)}"},
-                            json={"is_partner": True, "partner_pct": 30},
+                            headers={**_sb_headers(),
+                                     "Prefer": "resolution=merge-duplicates,return=minimal"},
+                            json={"user_id": _db_id(vk_id),
+                                  "is_partner": True, "partner_pct": 30},
                             timeout=10,
                         )
                     except Exception as e:
-                        print(f"[PARTNER] ⚠️ DB update error: {e}")
+                        print(f"[PARTNER] ⚠️ DB upsert error: {e}")
                 u["is_partner"] = True
                 u["partner_pct"] = 30
                 # Уведомляем админа
