@@ -502,6 +502,15 @@ def kb_support_link(admin_link: str) -> str:
     kb.add_button("🔙 Главное меню", VkKeyboardColor.SECONDARY)
     return kb.get_keyboard()
 
+# ─── Редирект-прокси (чтобы open_link кнопки работали через наш домен) ──────
+import secrets as _secrets
+_redirects: dict = {}
+
+def make_redirect_url(url: str) -> str:
+    token = _secrets.token_urlsafe(8)
+    _redirects[token] = url
+    return f"https://vk-bot-2vns.onrender.com/go/{token}"
+
 # ─── VK утилиты ───────────────────────────────────────────────────────────────
 _rand = __import__("random").randint
 
@@ -622,11 +631,11 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
 
     if t in ("💬 поддержка", "поддержка"):
         u["waiting_for"] = None
-        admin_link = f"https://vk.com/id{ADMIN_VK_ID}" if ADMIN_VK_ID else "https://vk.com/l_khlopenik"
+        raw_admin = f"https://vk.com/id{ADMIN_VK_ID}" if ADMIN_VK_ID else "https://vk.com/l_khlopenik"
         send(vk, vk_id,
              "💬 Поддержка FRAME\n\n"
              "Нажми кнопку ниже — перейдёшь в личный чат с поддержкой 🙌",
-             keyboard=kb_support_link(admin_link))
+             keyboard=kb_support_link(raw_admin))
         return
 
     if t in ("📄 оферта и правила", "оферта и правила", "оферта"):
@@ -706,7 +715,7 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
                      f"💳 {label_t} — {price}₽\n\n"
                      "Нажми кнопку ниже для безопасной оплаты через ЮKassa.\n"
                      "После оплаты кредиты зачислятся автоматически 💎",
-                     keyboard=kb_pay_link(link, label_t))
+                     keyboard=kb_pay_link(make_redirect_url(link), label_t))
             else:
                 send(vk, vk_id,
                      "⚠️ Не удалось создать ссылку для оплаты. Напишите в сообщения сообщества.",
@@ -845,6 +854,14 @@ def make_flask_app(vk):
 
     app = Flask(__name__)
 
+    @app.route("/go/<token>", methods=["GET"])
+    def _go(token):
+        from flask import redirect as flask_redirect
+        url = _redirects.get(token)
+        if url:
+            return flask_redirect(url, code=302)
+        return "Link expired", 410
+
     @app.route("/ping", methods=["GET"])
     def _ping():
         return jsonify({"ok": True}), 200
@@ -935,11 +952,12 @@ def make_flask_app(vk):
         # kind == support — бот шлёт кнопку перехода в личку
         if ADMIN_VK_ID:
             try:
+                short_support = make_redirect_url(f"https://vk.com/id{ADMIN_VK_ID}")
                 send(vk, vk_id,
                      "💬 Поддержка FRAME\n\n"
                      "Нажми кнопку ниже — перейдёшь в личный чат с поддержкой.\n"
                      "Напиши свой вопрос напрямую 🙌",
-                     keyboard=kb_support_link(f"https://vk.com/id{ADMIN_VK_ID}"))
+                     keyboard=kb_support_link(short_support))
             except Exception as e:
                 print(f"[SUPPORT] ⚠️ Could not send: {e}")
         return jsonify(ok=True, admin_link=admin_link)
@@ -1011,11 +1029,12 @@ def make_flask_app(vk):
         # Отправляем кнопку open_link — пользователь видит красивую кнопку, не голую ссылку
         try:
             label_text = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
+            short_link = make_redirect_url(link)
             send(vk, vk_id,
                  f"💳 Оплата: {label_text}\n\n"
                  f"Нажми кнопку ниже — откроется безопасная оплата через ЮKassa.\n"
                  f"После оплаты кредиты зачислятся автоматически 💎",
-                 keyboard=kb_pay_link(link, label_text))
+                 keyboard=kb_pay_link(short_link, label_text))
             print(f"[PAY] ✉️ Button sent to vk_id={vk_id}")
         except Exception as e:
             print(f"[PAY] ⚠️ Could not send: {e}")
