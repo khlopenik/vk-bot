@@ -921,12 +921,20 @@ def make_flask_app(vk):
         sent_to_chat = False
         try:
             label = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
+            # Кнопка open_link вместо «голой» ссылки — выглядит безопаснее для пользователя
+            pay_kb = json.dumps({
+                "inline": True,
+                "buttons": [[
+                    {"action": {"type": "open_link", "link": link, "label": "💳 Оплатить"}}
+                ]],
+            }, ensure_ascii=False)
             send(vk, vk_id,
-                 f"💳 Ссылка для оплаты: {label}\n\n"
-                 f"Нажми на ссылку ниже, чтобы оплатить. "
-                 f"После оплаты алмазы зачислятся автоматически 💎\n\n{link}")
+                 f"💳 Оплата пакета: {label}\n\n"
+                 f"Нажми кнопку ниже, чтобы перейти к оплате. "
+                 f"После оплаты алмазы зачислятся автоматически 💎",
+                 keyboard=pay_kb)
             sent_to_chat = True
-            print(f"[PAY] ✉️ Link sent to chat vk_id={vk_id}")
+            print(f"[PAY] ✉️ Link button sent to chat vk_id={vk_id}")
         except Exception as e:
             print(f"[PAY] ⚠️ Could not send link to chat: {e}")
 
