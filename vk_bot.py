@@ -895,6 +895,7 @@ def make_flask_app(vk):
         if not vk_id:
             return jsonify(error="vk_id required"), 400
         u = get_user(vk_id)
+        _load_credits_from_db(vk_id)  # всегда свежие данные из базы
         return jsonify(
             vk_id=vk_id,
             std_credits=u.get("std_credits", 0),
