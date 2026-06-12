@@ -921,17 +921,23 @@ def make_flask_app(vk):
         sent_to_chat = False
         try:
             label = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
-            # Ссылка обычным текстом — VK делает её кликабельной и открывает
-            # в нормальном браузере. Кнопка open_link часто неактивна (домен не в белом списке).
+            # Кнопка open_link — выглядит безопаснее ссылки. Чтобы была активной,
+            # домен yoomoney.ru должен быть в доверенных адресах приложения VK.
+            pay_kb = json.dumps({
+                "inline": True,
+                "buttons": [[
+                    {"action": {"type": "open_link", "link": link, "label": "💳 Оплатить"}}
+                ]],
+            }, ensure_ascii=False)
             send(vk, vk_id,
                  f"💳 Оплата пакета: {label}\n\n"
-                 f"👇 Нажми на ссылку ниже, чтобы перейти к безопасной оплате через ЮKassa. "
-                 f"После оплаты алмазы зачислятся автоматически 💎\n\n"
-                 f"{link}")
+                 f"Нажми кнопку «Оплатить» ниже. "
+                 f"После оплаты алмазы зачислятся автоматически 💎",
+                 keyboard=pay_kb)
             sent_to_chat = True
-            print(f"[PAY] ✉️ Link sent to chat vk_id={vk_id}")
+            print(f"[PAY] ✉️ Pay button sent to chat vk_id={vk_id}")
         except Exception as e:
-            print(f"[PAY] ⚠️ Could not send link to chat: {e}")
+            print(f"[PAY] ⚠️ Could not send pay button: {e}")
 
         return jsonify(confirmation_url=link, sent_to_chat=sent_to_chat)
 
