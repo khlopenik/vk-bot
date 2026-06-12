@@ -863,33 +863,20 @@ def make_flask_app(vk):
             return jsonify(error="vk_id required"), 400
         kind = data.get("kind", "support")  # support | partner
 
-        # 1) пишем пользователю в личку — у него появится уведомление и откроется чат
-        try:
-            if kind == "partner":
-                send(vk, vk_id,
-                     "🤝 Партнёрская программа FRAME\n\n"
-                     "Спасибо за интерес! Приводи людей в FRAME и получай 30% "
-                     "с каждой их оплаты — навсегда. 🤑\n\n"
-                     "Напиши сюда «Хочу в партнёры» — и мы всё расскажем и подключим тебя.")
-            else:
-                send(vk, vk_id,
-                     "💬 Поддержка FRAME\n\n"
-                     "Опиши свой вопрос прямо здесь, в этом чате — "
-                     "и мы ответим в ближайшее время 🙌")
-        except Exception as e:
-            print(f"[SUPPORT] ⚠️ Could not message user {vk_id}: {e}")
-
-        # 2) уведомляем админа
+        # Уведомляем админа (никаких сообщений самому пользователю)
         if ADMIN_VK_ID:
             try:
-                tag = "💰 ПАРТНЁРСТВО" if kind == "partner" else "💬 ПОДДЕРЖКА"
-                send(vk, ADMIN_VK_ID,
-                     f"🔔 {tag}\n\nПользователь vk.com/id{vk_id} нажал кнопку "
-                     f"«{'Стать партнёром' if kind == 'partner' else 'Написать в поддержку'}».")
+                if kind == "partner":
+                    send(vk, ADMIN_VK_ID,
+                         f"💰 НОВЫЙ ПАРТНЁР\n\n"
+                         f"Пользователь vk.com/id{vk_id} стал партнёром FRAME. 🤝")
+                # для support админу ничего не шлём — человек напишет напрямую
             except Exception as e:
                 print(f"[SUPPORT] ⚠️ Could not notify admin: {e}")
 
-        return jsonify(ok=True)
+        # Поддержка → отдаём ссылку на личку админа, чтобы фронт открыл чат с тобой
+        admin_link = f"https://vk.com/im?sel={ADMIN_VK_ID}" if ADMIN_VK_ID else "https://vk.com/l_khlopenik"
+        return jsonify(ok=True, admin_link=admin_link)
 
     @app.route("/api/tariffs", methods=["GET"])
     def api_tariffs():
