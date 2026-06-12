@@ -488,31 +488,19 @@ def kb_cancel() -> str:
 
 def kb_pay_link(link: str, label: str) -> str:
     """Клавиатура с кнопкой open_link для оплаты — НЕ голая ссылка."""
-    keyboard = {
-        "one_time": True,
-        "buttons": [
-            [{"action": {"type": "open_link",
-                         "label": f"💳 Оплатить — {label[:30]}",
-                         "link": link}}],
-            [{"action": {"type": "text", "label": "🔙 Главное меню"},
-              "color": "secondary"}],
-        ]
-    }
-    return json.dumps(keyboard, ensure_ascii=False)
+    kb = VkKeyboard(one_time=True)
+    kb.add_openlink_button(f"💳 Оплатить — {label[:28]}", link)
+    kb.add_line()
+    kb.add_button("🔙 Главное меню", VkKeyboardColor.SECONDARY)
+    return kb.get_keyboard()
 
 def kb_support_link(admin_link: str) -> str:
     """Клавиатура с кнопкой перехода в личку поддержки."""
-    keyboard = {
-        "one_time": True,
-        "buttons": [
-            [{"action": {"type": "open_link",
-                         "label": "💬 Написать напрямую",
-                         "link": admin_link}}],
-            [{"action": {"type": "text", "label": "🔙 Главное меню"},
-              "color": "secondary"}],
-        ]
-    }
-    return json.dumps(keyboard, ensure_ascii=False)
+    kb = VkKeyboard(one_time=True)
+    kb.add_openlink_button("💬 Написать напрямую", admin_link)
+    kb.add_line()
+    kb.add_button("🔙 Главное меню", VkKeyboardColor.SECONDARY)
+    return kb.get_keyboard()
 
 # ─── VK утилиты ───────────────────────────────────────────────────────────────
 _rand = __import__("random").randint
