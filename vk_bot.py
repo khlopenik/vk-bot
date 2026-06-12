@@ -915,7 +915,22 @@ def make_flask_app(vk):
         if not link:
             return jsonify(error="payment_link_error", detail=yk_err), 500
         print(f"[PAY] ✅ Link created: {link[:60]}...")
-        return jsonify(confirmation_url=link)
+
+        # Дублируем ссылку в личные сообщения — встроенный браузер VK не открывает
+        # страницу ЮKassa (чёрный экран), а из чата ссылка открывается в нормальном браузере.
+        sent_to_chat = False
+        try:
+            label = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
+            send(vk, vk_id,
+                 f"💳 Ссылка для оплаты: {label}\n\n"
+                 f"Нажми на ссылку ниже, чтобы оплатить. "
+                 f"После оплаты алмазы зачислятся автоматически 💎\n\n{link}")
+            sent_to_chat = True
+            print(f"[PAY] ✉️ Link sent to chat vk_id={vk_id}")
+        except Exception as e:
+            print(f"[PAY] ⚠️ Could not send link to chat: {e}")
+
+        return jsonify(confirmation_url=link, sent_to_chat=sent_to_chat)
 
     @app.route("/api/generate", methods=["POST"])
     def api_generate():
