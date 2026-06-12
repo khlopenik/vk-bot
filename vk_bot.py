@@ -1176,20 +1176,32 @@ def make_flask_app(vk):
 def main():
     if not VK_TOKEN:
         print("❌ VK_TOKEN не задан в env!")
+        # Нет токена — запускаем только Flask (чтобы Render не убил сервис)
+        port = int(os.environ.get("PORT", "") or "5000")
+        from flask import Flask
+        app = Flask(__name__)
+        @app.route("/ping")
+        def _ping(): return "no token"
+        app.run(host="0.0.0.0", port=port, use_reloader=False)
         return
 
-    # requests.Session без таймаута может зависнуть навсегда на сетевом запросе —
-    # патчим session.request, чтобы всегда был дефолтный timeout.
-    _http = requests.Session()
-    _orig_request = _http.request
-    def _request_with_timeout(method, url, **kwargs):
-        kwargs.setdefault("timeout", 30)
-        return _orig_request(method, url, **kwargs)
-    _http.request = _request_with_timeout
+    print(f"🚀 Старт бота (Python {__import__('sys').version})")
 
-    vk_session = vk_api.VkApi(token=VK_TOKEN, session=_http)
-    vk = vk_session.get_api()
-    upload = VkUpload(vk_session)
+    try:
+        vk_session = vk_api.VkApi(token=VK_TOKEN)
+        vk = vk_session.get_api()
+        upload = VkUpload(vk_session)
+    except Exception as e:
+        print(f"❌ Ошибка инициализации VK API: {e}")
+        import traceback; traceback.print_exc()
+        # Запускаем Flask чтобы Render не убил сервис из-за отсутствия порта
+        port = int(os.environ.get("PORT", "") or "5000")
+        from flask import Flask
+        app = Flask(__name__)
+        @app.route("/ping")
+        def _ping2(): return "vk init error"
+        app.run(host="0.0.0.0", port=port, use_reloader=False)
+        return
 
     # Определяем group_id из токена
     try:
@@ -1201,7 +1213,7 @@ def main():
         group_id = 0
 
     # Flask для YooKassa webhook (запускаем в фоне)
-    port = int(os.environ.get("PORT", "5000"))
+    port = int(os.environ.get("PORT", "") or "5000")
     flask_app = make_flask_app(vk)
     if flask_app:
         t = threading.Thread(
@@ -1250,8 +1262,12 @@ def main():
                     except Exception:
                         pass
 
+        except (KeyboardInterrupt, SystemExit):
+            print("🛑 Остановка бота")
+            break
         except Exception as e:
             print(f"❌ Long Poll error: {type(e).__name__}: {e}")
+            import traceback; traceback.print_exc()
             print("⏳ Перезапуск через 5 секунд...")
             time.sleep(5)
 
