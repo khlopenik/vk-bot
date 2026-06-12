@@ -102,7 +102,7 @@ def get_user(vk_id: int) -> dict:
     with user_lock:
         if vk_id not in user_data:
             user_data[vk_id] = {
-                "waiting_for":     None,   # "photo" | "model" | "prompt" | "diamond_model"
+                "waiting_for":     None,
                 "face_url":        None,
                 "selected_model":  "std",
                 "std_credits":     0,
@@ -110,6 +110,10 @@ def get_user(vk_id: int) -> dict:
                 "pro_credits":     0,
                 "diamond_credits": 0,
                 "gift_credits":    0,
+                "ref_count":       0,
+                "is_partner":      False,
+                "partner_pct":     0,
+                "partner_paid":    0.0,
                 "pd_consent":      False,
             }
             _load_credits_from_db(vk_id)
@@ -134,15 +138,20 @@ def _load_credits_from_db(vk_id: int) -> None:
             f"{SUPABASE_URL}/rest/v1/user_credits",
             headers=_sb_headers(),
             params={"user_id": f"eq.{_db_id(vk_id)}",
-                    "select": "std_credits,v2_credits,pro_credits,diamond_credits,gift_credits"},
+                    "select": "std_credits,v2_credits,pro_credits,diamond_credits,gift_credits,ref_count,is_partner,partner_pct,partner_paid"},
             timeout=10,
         )
         if r.ok and r.json():
             row = r.json()[0]
             u = user_data[vk_id]
-            for k in ("std_credits","v2_credits","pro_credits","diamond_credits","gift_credits"):
+            for k in ("std_credits","v2_credits","pro_credits","diamond_credits","gift_credits",
+                      "ref_count","partner_pct"):
                 if row.get(k) is not None:
                     u[k] = row[k]
+            if row.get("is_partner") is not None:
+                u["is_partner"] = bool(row["is_partner"])
+            if row.get("partner_paid") is not None:
+                u["partner_paid"] = float(row["partner_paid"] or 0)
             if any(row.get(k, 0) for k in ("std_credits","v2_credits","pro_credits","diamond_credits")):
                 u["pd_consent"] = True
     except Exception as e:
@@ -359,8 +368,8 @@ def ensure_dynamic_tariff(tariff_key: str) -> bool:
     return False
 
 # ─── YooKassa платёж ──────────────────────────────────────────────────────────
-def create_yookassa_link(vk_id: int, tariff_key: str):
-    """Возвращает (url, error_str). url=None если ошибка."""
+def create_yookassa_embedded(vk_id: int, tariff_key: str):
+    """Возвращает (confirmation_token, error_str). Embedded — виджет внутри приложения."""
     ensure_dynamic_tariff(tariff_key)
     t = TARIFF_PRICES.get(tariff_key)
     if not t or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
@@ -375,9 +384,8 @@ def create_yookassa_link(vk_id: int, tariff_key: str):
             headers={"Idempotence-Key": str(uuid.uuid4()),
                      "Content-Type": "application/json"},
             json={
-                "amount": {"value": str(discounted) + ".00", "currency": "RUB"},
-                "confirmation": {"type": "redirect",
-                                 "return_url": "https://vk.com"},
+                "amount": {"value": f"{discounted}.00", "currency": "RUB"},
+                "confirmation": {"type": "embedded"},
                 "capture": True,
                 "description": f"FRAME VK: {label} (vk_id={vk_id})",
                 "metadata": {"vk_id": str(vk_id), "tariff": tariff_key},
@@ -386,12 +394,12 @@ def create_yookassa_link(vk_id: int, tariff_key: str):
         )
         data = r.json()
         print(f"[YK] status={r.status_code} response={str(data)[:500]}")
-        url = data.get("confirmation", {}).get("confirmation_url")
-        if not url:
+        token = data.get("confirmation", {}).get("confirmation_token")
+        if not token:
             err = data.get("description") or data.get("code") or str(data)[:200]
-            print(f"[YK] ❌ No confirmation_url. YK error: {err}")
+            print(f"[YK] ❌ No confirmation_token. YK error: {err}")
             return None, err
-        return url, None
+        return token, None
     except Exception as e:
         print(f"[YooKassa] error: {e}")
         return None, str(e)
@@ -850,6 +858,10 @@ def make_flask_app(vk):
             pro_credits=u.get("pro_credits", 0),
             diamond_credits=u.get("diamond_credits", 0),
             gift_credits=u.get("gift_credits", 0),
+            ref_count=u.get("ref_count", 0),
+            is_partner=u.get("is_partner", False),
+            partner_pct=u.get("partner_pct", 0),
+            partner_paid=u.get("partner_paid", 0.0),
         )
 
     @app.route("/api/support", methods=["POST"])
@@ -863,19 +875,43 @@ def make_flask_app(vk):
             return jsonify(error="vk_id required"), 400
         kind = data.get("kind", "support")  # support | partner
 
-        # Уведомляем админа (никаких сообщений самому пользователю)
-        if ADMIN_VK_ID:
-            try:
-                if kind == "partner":
-                    send(vk, ADMIN_VK_ID,
-                         f"💰 НОВЫЙ ПАРТНЁР\n\n"
-                         f"Пользователь vk.com/id{vk_id} стал партнёром FRAME. 🤝")
-                # для support админу ничего не шлём — человек напишет напрямую
-            except Exception as e:
-                print(f"[SUPPORT] ⚠️ Could not notify admin: {e}")
-
-        # Поддержка → отдаём ссылку на личку админа, чтобы фронт открыл чат с тобой
         admin_link = f"https://vk.com/im?sel={ADMIN_VK_ID}" if ADMIN_VK_ID else "https://vk.com/l_khlopenik"
+
+        if kind == "partner":
+            u = get_user(vk_id)
+            already = u.get("is_partner", False)
+            if not already:
+                # Записываем в Supabase
+                if SUPABASE_URL:
+                    try:
+                        requests.patch(
+                            f"{SUPABASE_URL}/rest/v1/user_credits",
+                            headers={**_sb_headers(), "Prefer": "return=minimal"},
+                            params={"user_id": f"eq.{_db_id(vk_id)}"},
+                            json={"is_partner": True, "partner_pct": 30},
+                            timeout=10,
+                        )
+                    except Exception as e:
+                        print(f"[PARTNER] ⚠️ DB update error: {e}")
+                u["is_partner"] = True
+                u["partner_pct"] = 30
+                # Уведомляем админа
+                if ADMIN_VK_ID:
+                    try:
+                        send(vk, ADMIN_VK_ID,
+                             f"💰 НОВЫЙ ПАРТНЁР\n\nvk.com/id{vk_id} стал партнёром FRAME 🤝\n"
+                             f"Процент: 30%")
+                    except Exception as e:
+                        print(f"[PARTNER] ⚠️ Notify admin error: {e}")
+            return jsonify(
+                ok=True,
+                is_partner=True,
+                partner_pct=u.get("partner_pct", 30),
+                partner_paid=u.get("partner_paid", 0.0),
+                ref_count=u.get("ref_count", 0),
+            )
+
+        # kind == support — отдаём ссылку на личку, фронт откроет чат
         return jsonify(ok=True, admin_link=admin_link)
 
     @app.route("/api/tariffs", methods=["GET"])
@@ -927,7 +963,7 @@ def make_flask_app(vk):
             return jsonify(error="vk_id and tariff required"), 400
 
         if not YOKASSA_SHOP_ID or not YOKASSA_KEY:
-            print(f"[PAY] ❌ YOKASSA env vars not set! shop={bool(YOKASSA_SHOP_ID)} key={bool(YOKASSA_KEY)}")
+            print(f"[PAY] ❌ YOKASSA env vars not set!")
             return jsonify(error="payment_not_configured",
                            detail="YOKASSA_SHOP_ID / YOKASSA_KEY не заданы в Render env vars"), 503
 
@@ -936,30 +972,12 @@ def make_flask_app(vk):
             print(f"[PAY] ❌ Unknown tariff_key: {tariff_key!r}")
             return jsonify(error="unknown_tariff"), 400
 
-        print(f"[PAY] Creating link vk_id={vk_id} tariff={tariff_key}")
-        link, yk_err = create_yookassa_link(vk_id, tariff_key)
-        if not link:
+        print(f"[PAY] Creating embedded payment vk_id={vk_id} tariff={tariff_key}")
+        token, yk_err = create_yookassa_embedded(vk_id, tariff_key)
+        if not token:
             return jsonify(error="payment_link_error", detail=yk_err), 500
-        print(f"[PAY] ✅ Link created: {link[:60]}...")
-
-        # Дублируем ссылку в личные сообщения — встроенный браузер VK не открывает
-        # страницу ЮKassa (чёрный экран), а из чата ссылка открывается в нормальном браузере.
-        sent_to_chat = False
-        try:
-            label = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
-            # Ссылка кликабельным текстом — VK сам делает её ссылкой и открывает
-            # в нормальном браузере. Кнопку open_link VK не даёт активировать для yoomoney.
-            send(vk, vk_id,
-                 f"💳 Оплата пакета: {label}\n\n"
-                 f"👇 Нажми на ссылку ниже — откроется безопасная оплата через ЮKassa. "
-                 f"После оплаты алмазы зачислятся автоматически 💎\n\n"
-                 f"{link}")
-            sent_to_chat = True
-            print(f"[PAY] ✉️ Link sent to chat vk_id={vk_id}")
-        except Exception as e:
-            print(f"[PAY] ⚠️ Could not send link: {e}")
-
-        return jsonify(confirmation_url=link, sent_to_chat=sent_to_chat)
+        print(f"[PAY] ✅ Token created: {token[:30]}...")
+        return jsonify(confirmation_token=token)
 
     @app.route("/api/generate", methods=["POST"])
     def api_generate():
