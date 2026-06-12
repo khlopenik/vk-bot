@@ -486,6 +486,34 @@ def kb_cancel() -> str:
     kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
     return kb.get_keyboard()
 
+def kb_pay_link(link: str, label: str) -> str:
+    """Клавиатура с кнопкой open_link для оплаты — НЕ голая ссылка."""
+    keyboard = {
+        "one_time": True,
+        "buttons": [
+            [{"action": {"type": "open_link",
+                         "label": f"💳 Оплатить — {label[:30]}",
+                         "link": link}}],
+            [{"action": {"type": "text", "label": "🔙 Главное меню"},
+              "color": "secondary"}],
+        ]
+    }
+    return json.dumps(keyboard, ensure_ascii=False)
+
+def kb_support_link(admin_link: str) -> str:
+    """Клавиатура с кнопкой перехода в личку поддержки."""
+    keyboard = {
+        "one_time": True,
+        "buttons": [
+            [{"action": {"type": "open_link",
+                         "label": "💬 Написать напрямую",
+                         "link": admin_link}}],
+            [{"action": {"type": "text", "label": "🔙 Главное меню"},
+              "color": "secondary"}],
+        ]
+    }
+    return json.dumps(keyboard, ensure_ascii=False)
+
 # ─── VK утилиты ───────────────────────────────────────────────────────────────
 _rand = __import__("random").randint
 
@@ -606,11 +634,11 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
 
     if t in ("💬 поддержка", "поддержка"):
         u["waiting_for"] = None
+        admin_link = f"https://vk.com/id{ADMIN_VK_ID}" if ADMIN_VK_ID else "https://vk.com/l_khlopenik"
         send(vk, vk_id,
              "💬 Поддержка FRAME\n\n"
-             "По любому вопросу — напишите напрямую в поддержку:\n"
-             "vk.com/l_khlopenik",
-             keyboard=kb_main())
+             "Нажми кнопку ниже — перейдёшь в личный чат с поддержкой 🙌",
+             keyboard=kb_support_link(admin_link))
         return
 
     if t in ("📄 оферта и правила", "оферта и правила", "оферта"):
@@ -682,13 +710,15 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
         tariff_key = tariff_map.get(t)
         if tariff_key:
             u["waiting_for"] = None
+            label_t = TARIFF_PRICES[tariff_key][0]
             price = TARIFF_PRICES[tariff_key][3]
             link, _ = create_yookassa_link(vk_id, tariff_key)
             if link:
                 send(vk, vk_id,
-                     f"💳 Ссылка для оплаты {TARIFF_PRICES[tariff_key][0]} — {price}₽:\n\n{link}\n\n"
-                     "После оплаты кредиты будут начислены автоматически.",
-                     keyboard=kb_main())
+                     f"💳 {label_t} — {price}₽\n\n"
+                     "Нажми кнопку ниже для безопасной оплаты через ЮKassa.\n"
+                     "После оплаты кредиты зачислятся автоматически 💎",
+                     keyboard=kb_pay_link(link, label_t))
             else:
                 send(vk, vk_id,
                      "⚠️ Не удалось создать ссылку для оплаты. Напишите в сообщения сообщества.",
@@ -913,13 +943,14 @@ def make_flask_app(vk):
                 ref_count=u.get("ref_count", 0),
             )
 
-        # kind == support — бот шлёт гиперссылку на личку, фронт показывает тост
+        # kind == support — бот шлёт кнопку перехода в личку
         if ADMIN_VK_ID:
             try:
                 send(vk, vk_id,
-                     f"💬 Поддержка FRAME\n\n"
-                     f"[Написать в поддержку|https://vk.com/id{ADMIN_VK_ID}]\n\n"
-                     f"Нажми на ссылку выше — откроется личный чат со мной. Напиши свой вопрос 🙌")
+                     "💬 Поддержка FRAME\n\n"
+                     "Нажми кнопку ниже — перейдёшь в личный чат с поддержкой.\n"
+                     "Напиши свой вопрос напрямую 🙌",
+                     keyboard=kb_support_link(f"https://vk.com/id{ADMIN_VK_ID}"))
             except Exception as e:
                 print(f"[SUPPORT] ⚠️ Could not send: {e}")
         return jsonify(ok=True, admin_link=admin_link)
@@ -988,14 +1019,15 @@ def make_flask_app(vk):
             return jsonify(error="payment_link_error", detail=yk_err), 500
         print(f"[PAY] ✅ Link created: {link[:60]}...")
 
-        # Отправляем VK-гиперссылку в чат — НЕ голый URL, а красивый текст [label|url]
+        # Отправляем кнопку open_link — пользователь видит красивую кнопку, не голую ссылку
         try:
-            label = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
+            label_text = TARIFF_PRICES.get(tariff_key, ("Пакет",))[0]
             send(vk, vk_id,
-                 f"💳 Оплата: {label}\n\n"
-                 f"[Нажми здесь — безопасная оплата через ЮKassa|{link}]\n\n"
-                 f"После оплаты кредиты зачислятся автоматически 💎")
-            print(f"[PAY] ✉️ Hyperlink sent to vk_id={vk_id}")
+                 f"💳 Оплата: {label_text}\n\n"
+                 f"Нажми кнопку ниже — откроется безопасная оплата через ЮKassa.\n"
+                 f"После оплаты кредиты зачислятся автоматически 💎",
+                 keyboard=kb_pay_link(link, label_text))
+            print(f"[PAY] ✉️ Button sent to vk_id={vk_id}")
         except Exception as e:
             print(f"[PAY] ⚠️ Could not send: {e}")
 
