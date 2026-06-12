@@ -635,7 +635,15 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
         send(vk, vk_id,
              "💬 Поддержка FRAME\n\n"
              "Нажми кнопку ниже — перейдёшь в личный чат с поддержкой 🙌",
-             keyboard=kb_support_link(raw_admin))
+             keyboard=kb_support_link(make_redirect_url(raw_admin)))
+        if ADMIN_VK_ID:
+            try:
+                send(vk, ADMIN_VK_ID,
+                     f"🆘 ПОДДЕРЖКА ВК\n\n"
+                     f"Пользователь vk.com/id{vk_id} написал в поддержку.\n"
+                     f"Напиши ему 👉 vk.com/id{vk_id}")
+            except Exception:
+                pass
         return
 
     if t in ("📄 оферта и правила", "оферта и правила", "оферта"):
@@ -958,6 +966,11 @@ def make_flask_app(vk):
                      "Нажми кнопку ниже — перейдёшь в личный чат с поддержкой.\n"
                      "Напиши свой вопрос напрямую 🙌",
                      keyboard=kb_support_link(short_support))
+                # Уведомление админу — сразу при нажатии
+                send(vk, ADMIN_VK_ID,
+                     f"🆘 ПОДДЕРЖКА ВК\n\n"
+                     f"Пользователь vk.com/id{vk_id} нажал кнопку поддержки.\n"
+                     f"Напиши ему первым 👉 vk.com/id{vk_id}")
             except Exception as e:
                 print(f"[SUPPORT] ⚠️ Could not send: {e}")
         return jsonify(ok=True, admin_link=admin_link)
