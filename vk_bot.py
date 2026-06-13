@@ -239,6 +239,7 @@ def poll_result(request_id: str, max_attempts: int = 60) -> Optional[str]:
 
 # ─── Кредиты ──────────────────────────────────────────────────────────────────
 CREDIT_KEY = {"std": "std_credits", "v2": "v2_credits", "pro": "pro_credits"}
+QUALITY_DIA_COST = {"std": 79, "v2": 99, "pro": 149}  # алмазов за 1 генерацию
 
 def has_credits(vk_id: int, model_key: str) -> bool:
     u = get_user(vk_id)
@@ -246,7 +247,11 @@ def has_credits(vk_id: int, model_key: str) -> bool:
         cost = DIAMOND_MODELS[model_key][1]
         return u.get("diamond_credits", 0) >= cost
     ckey = CREDIT_KEY.get(model_key, "std_credits")
-    return u.get(ckey, 0) > 0 or u.get("gift_credits", 0) > 0
+    if u.get(ckey, 0) > 0 or u.get("gift_credits", 0) > 0:
+        return True
+    # Fallback: списать алмазами если пакета нет
+    dia_cost = QUALITY_DIA_COST.get(model_key, 79)
+    return u.get("diamond_credits", 0) >= dia_cost
 
 def deduct_credit(vk_id: int, model_key: str) -> None:
     u = get_user(vk_id)
@@ -259,6 +264,10 @@ def deduct_credit(vk_id: int, model_key: str) -> None:
             u[ckey] -= 1
         elif u.get("gift_credits", 0) > 0:
             u["gift_credits"] -= 1
+        else:
+            # Fallback: списываем алмазами
+            dia_cost = QUALITY_DIA_COST.get(model_key, 79)
+            u["diamond_credits"] = max(0, u.get("diamond_credits", 0) - dia_cost)
     _save_credits_to_db(vk_id)
 
 def add_credits(vk_id: int, tariff_key: str) -> str:
