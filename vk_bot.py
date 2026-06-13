@@ -221,7 +221,9 @@ def start_generation(prompt: str, model_slug: str, image_url: str,
     try:
         resp = requests.post(f"{MUAPI_URL}/{model_slug}",
                              headers=MUAPI_HEADERS, json=body, timeout=30)
-        resp.raise_for_status()
+        print(f"[MuAPI] POST /{model_slug} → {resp.status_code}: {resp.text[:300]}")
+        if not resp.ok:
+            return None
         data = resp.json()
         return data.get("request_id") or data.get("id")
     except Exception as e:
