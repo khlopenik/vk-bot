@@ -31,23 +31,23 @@ VK_ID_OFFSET = 10_000_000_000
 
 # ─── Модели ───────────────────────────────────────────────────────────────────
 GALLERY_MODELS = {
-    "std": ("nano-banana-edit",        "image_url",    True,  "⭐ Стандарт"),
+    "std": ("nano-banana-edit",        "images_list",  True,  "⭐ Стандарт"),
     "v2":  ("nano-banana-2-edit",      "images_list",  True,  "✨ Версия 2"),
-    "pro": ("nano-banana-pro-edit",    "image_url",    True,  "💎 Про"),
+    "pro": ("nano-banana-pro-edit",    "images_list",  True,  "💎 Про"),
 }
 
 DIAMOND_MODELS = {
-    "nb_edit":   ("nano-banana-edit",                     79,  "⭐ Nano Banana"),
-    "nb2_edit":  ("nano-banana-2-edit",                   99,  "✨ Nano Banana 2",  "images_list"),
-    "nbpro":     ("nano-banana-pro-edit",                149,  "💎 Nano Banana Pro"),
-    "gpt4o":     ("gpt4o-image-to-image",                 99,  "🤖 GPT-4o"),
-    "gpt_img2":  ("gpt-image-2-image-to-image",          199,  "🤖 GPT Image 2"),
-    "seedream":  ("bytedance-seedream-v4.5-edit",         99,  "🌱 Seedream"),
-    "grok_i2i":  ("grok-imagine-image-to-image",          99,  "🧠 Grok"),
-    "kling_o3":  ("kling-o3-image-edit",                  79,  "🎬 Kling O3"),
-    "flux_pro":  ("flux-kontext-pro-i2i",                 79,  "⚡ Flux Pro"),
-    "flux_max":  ("flux-kontext-max-i2i",                 99,  "⚡ Flux Max"),
-    "pulid":     ("flux-pulid",                           99,  "🎭 PuLID"),
+    "nb_edit":   ("nano-banana-edit",              79,  "⭐ Nano Banana",    "images_list"),
+    "nb2_edit":  ("nano-banana-2-edit",            99,  "✨ Nano Banana 2",  "images_list"),
+    "nbpro":     ("nano-banana-pro-edit",         149,  "💎 Nano Banana Pro","images_list"),
+    "gpt4o":     ("gpt4o-image-to-image",          99,  "🤖 GPT-4o",        "images_list"),
+    "gpt_img2":  ("gpt-image-2-image-to-image",   199,  "🤖 GPT Image 2",   "images_list"),
+    "seedream":  ("bytedance-seedream-v4.5-edit",  99,  "🌱 Seedream",      "images_list"),
+    "grok_i2i":  ("grok-imagine-image-to-image",   99,  "🧠 Grok",          "images_list"),
+    "kling_o3":  ("kling-o3-image-edit",           79,  "🎬 Kling O3",      "images_list"),
+    "flux_pro":  ("flux-kontext-pro-i2i",          79,  "⚡ Flux Pro",      "images_list"),
+    "flux_max":  ("flux-kontext-max-i2i",          99,  "⚡ Flux Max",      "images_list"),
+    "pulid":     ("flux-pulid",                    99,  "🎭 PuLID",         "image_url"),
 }
 
 TARIFF_PRICES = {
