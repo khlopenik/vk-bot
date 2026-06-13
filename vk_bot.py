@@ -1172,8 +1172,15 @@ def make_flask_app(vk):
                 attach = f"doc{docs[0]['owner_id']}_{docs[0]['id']}"
                 send(vk, vk_id, "✨ Ваше фото готово!", attachment=attach)
             except Exception as se:
-                print(f"[API] send_result error: {se}")
-                send(vk, vk_id, "✨ Ваше фото готово! Смотри в приложении.")
+                print(f"[API] doc upload failed, trying photo: {se}")
+                try:
+                    att = upload_result_to_vk(vk, vk_api.VkUpload(vk), 0, result_url)
+                    if att:
+                        send(vk, vk_id, "✨ Ваше фото готово!", attachment=att)
+                    else:
+                        send(vk, vk_id, "✨ Ваше фото готово! Смотри в разделе История.")
+                except Exception as se2:
+                    print(f"[API] photo upload also failed: {se2}")
             return jsonify(result_url=proxied_url)
         except Exception as e:
             print(f"[API] generate error: {e}")
