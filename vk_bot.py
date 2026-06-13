@@ -907,26 +907,38 @@ def make_flask_app(vk):
         return jsonify(ok=True)
 
     # ── Mini App API ──────────────────────────────────────────────────────
-    @app.route("/api/img", methods=["GET"])
-    def api_img_proxy():
-        """Проксируем изображение через наш сервер — скрываем источник."""
+    def _proxy_image(src: str, as_download: bool = False):
+        """Общая логика прокси-изображений."""
         from flask import Response
         import urllib.request
-        src = freq.args.get("src", "")
         if not src:
             return "missing src", 400
-        download = freq.args.get("download") == "1"
         try:
             req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 data = r.read()
                 ct = r.headers.get("Content-Type", "image/jpeg")
-            headers = {"Cache-Control": "public, max-age=86400"}
-            if download:
+            headers = {
+                "Cache-Control": "public, max-age=86400",
+                "Access-Control-Allow-Origin": "*",
+            }
+            if as_download:
                 headers["Content-Disposition"] = "attachment; filename=\"frame_photo.jpg\""
             return Response(data, content_type=ct, headers=headers)
         except Exception as e:
             return f"proxy error: {e}", 502
+
+    @app.route("/api/img", methods=["GET"])
+    def api_img_proxy():
+        """Проксируем изображение через наш сервер — скрываем источник."""
+        src = freq.args.get("src", "")
+        return _proxy_image(src, as_download=freq.args.get("download") == "1")
+
+    @app.route("/api/photo.jpg", methods=["GET"])
+    def api_photo_download():
+        """Чистый URL для VKWebAppDownloadFile — всегда отдаёт как скачивание."""
+        src = freq.args.get("src", "")
+        return _proxy_image(src, as_download=True)
 
     @app.route("/api/upload-photo", methods=["POST"])
     def api_upload_photo():
