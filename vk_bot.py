@@ -1222,6 +1222,13 @@ def make_flask_app(vk):
                 timeout=10,
             )
             styles = r.json() if r.ok else []
+            import urllib.parse as _up
+            proxy = "https://vk-bot-2vns.onrender.com/api/img?src="
+            for s in styles:
+                if s.get("photo_url"):
+                    s["photo_url"] = proxy + _up.quote(s["photo_url"], safe="")
+                if s.get("collage_example_url"):
+                    s["collage_example_url"] = proxy + _up.quote(s["collage_example_url"], safe="")
             return jsonify(styles)
         except Exception as e:
             print(f"[API] styles error: {e}")
@@ -1241,15 +1248,18 @@ def make_flask_app(vk):
             s = r.json() if r.ok else {}
             if not s or "id" not in s:
                 return jsonify(ok=False), 404
+            import urllib.parse as _up2
+            proxy = "https://vk-bot-2vns.onrender.com/api/img?src="
+            def _p(u): return (proxy + _up2.quote(u, safe="")) if u else ""
             return jsonify(
                 ok=True,
                 id=s.get("id"),
                 name=s.get("name", ""),
-                photo_url=s.get("photo_url", ""),
+                photo_url=_p(s.get("photo_url", "")),
                 input_label=s.get("input_label", ""),
                 photo_count=s.get("photo_count", 1) or 1,
                 photo_hint=s.get("photo_hint", ""),
-                collage_example_url=s.get("collage_example_url", ""),
+                collage_example_url=_p(s.get("collage_example_url", "")),
                 quality_modes=s.get("quality_modes", "std,v2,pro") or "std,v2,pro",
                 category_key=s.get("category_key", ""),
             )
