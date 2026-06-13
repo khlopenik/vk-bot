@@ -616,8 +616,7 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
             u["pd_consent"] = True
         send(vk, vk_id,
              "👋 Привет! Я FRAME — бот AI-фотосессий.\n\n"
-             "📱 Открыть приложение: vk.com/app54628838\n\n"
-             "Или работай прямо здесь — выбери действие:",
+             "Нажми кнопку ниже чтобы открыть приложение, или выбери действие:",
              keyboard=kb_main())
         return
 
