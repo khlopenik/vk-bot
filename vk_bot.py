@@ -915,13 +915,16 @@ def make_flask_app(vk):
         src = freq.args.get("src", "")
         if not src:
             return "missing src", 400
+        download = freq.args.get("download") == "1"
         try:
             req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=15) as r:
                 data = r.read()
                 ct = r.headers.get("Content-Type", "image/jpeg")
-            return Response(data, content_type=ct,
-                            headers={"Cache-Control": "public, max-age=86400"})
+            headers = {"Cache-Control": "public, max-age=86400"}
+            if download:
+                headers["Content-Disposition"] = "attachment; filename=\"frame_photo.jpg\""
+            return Response(data, content_type=ct, headers=headers)
         except Exception as e:
             return f"proxy error: {e}", 502
 
@@ -1170,7 +1173,7 @@ def make_flask_app(vk):
                 send(vk, vk_id, "✨ Ваше фото готово!", attachment=attach)
             except Exception as se:
                 print(f"[API] send_result error: {se}")
-                send(vk, vk_id, f"✨ Ваше фото готово!\n{result_url}")
+                send(vk, vk_id, "✨ Ваше фото готово! Смотри в приложении.")
             return jsonify(result_url=proxied_url)
         except Exception as e:
             print(f"[API] generate error: {e}")
