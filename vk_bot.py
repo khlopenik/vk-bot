@@ -217,8 +217,7 @@ def start_generation(prompt: str, model_slug: str, image_url: str,
         body["prompt"] = prompt
     if image_url:
         body[input_type] = image_url
-    image_size = SIZE_MAP.get(size, "portrait_16_9")
-    body["image_size"] = image_size
+    # image_size поддерживается только text-to-image моделями, не i2i
     try:
         resp = requests.post(f"{MUAPI_URL}/{model_slug}",
                              headers=MUAPI_HEADERS, json=body, timeout=30)
