@@ -1135,7 +1135,7 @@ def make_flask_app(vk):
         try:
             params = {
                 "active": "eq.true",
-                "order":  "sort_order.asc",
+                "order":  "hot.desc,created_at.desc",
                 "select": "id,name,prompt,photo_url,input_label,photo_count,photo_hint,collage_example_url,quality_modes,category_key,hot",
             }
             if category_key != "all":
