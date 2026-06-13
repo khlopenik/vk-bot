@@ -907,6 +907,24 @@ def make_flask_app(vk):
         return jsonify(ok=True)
 
     # ── Mini App API ──────────────────────────────────────────────────────
+    @app.route("/api/img", methods=["GET"])
+    def api_img_proxy():
+        """Проксируем изображение через наш сервер — скрываем источник."""
+        from flask import Response
+        import urllib.request
+        src = freq.args.get("src", "")
+        if not src:
+            return "missing src", 400
+        try:
+            req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = r.read()
+                ct = r.headers.get("Content-Type", "image/jpeg")
+            return Response(data, content_type=ct,
+                            headers={"Cache-Control": "public, max-age=86400"})
+        except Exception as e:
+            return f"proxy error: {e}", 502
+
     @app.route("/api/upload-photo", methods=["POST"])
     def api_upload_photo():
         """Принимает файл изображения, сохраняет временно, отдаёт публичный URL."""
@@ -1135,12 +1153,15 @@ def make_flask_app(vk):
             if not result_url or result_url == FAILED_SENTINEL:
                 return jsonify(error="generation_failed"), 500
             deduct_credit(vk_id, model_key)
-            _save_history(vk_id, prompt, result_url)
+            # Прячем источник — отдаём URL через наш прокси
+            import urllib.parse
+            proxied_url = f"https://vk-bot-2vns.onrender.com/api/img?src={urllib.parse.quote(result_url, safe='')}"
+            _save_history(vk_id, prompt, proxied_url)
             # Отправляем результат в чат пользователю без сжатия (как документ)
             try:
                 import urllib.request, tempfile, os
                 with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                    urllib.request.urlretrieve(result_url, tmp.name)
+                    urllib.request.urlretrieve(result_url, tmp.name)  # оригинал для отправки
                     tmp_path = tmp.name
                 upload = vk_api.VkUpload(vk)
                 docs = upload.document_message(tmp_path, peer_id=vk_id, title="FRAME фото")
@@ -1150,7 +1171,7 @@ def make_flask_app(vk):
             except Exception as se:
                 print(f"[API] send_result error: {se}")
                 send(vk, vk_id, f"✨ Ваше фото готово!\n{result_url}")
-            return jsonify(result_url=result_url)
+            return jsonify(result_url=proxied_url)
         except Exception as e:
             print(f"[API] generate error: {e}")
             return jsonify(error="internal_error"), 500
