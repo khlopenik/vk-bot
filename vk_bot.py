@@ -1091,6 +1091,35 @@ def make_flask_app(vk):
             print(f"[API] history error: {e}")
             return jsonify(history=[])
 
+    @app.route("/api/send-photo", methods=["POST"])
+    def api_send_photo():
+        """Отправляет фото из истории в VK-чат пользователя."""
+        data = freq.get_json(silent=True) or {}
+        try:
+            vk_id = int(data.get("vk_id", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="bad vk_id"), 400
+        photo_url = data.get("photo_url", "")
+        if not vk_id or not photo_url:
+            return jsonify(error="missing params"), 400
+        try:
+            # Если это наш прокси — достаём оригинальный URL
+            import urllib.parse as _up
+            if "/api/img?" in photo_url:
+                from urllib.parse import urlparse, parse_qs
+                qs = parse_qs(urlparse(photo_url).query)
+                src = qs.get("src", [photo_url])[0]
+            else:
+                src = photo_url
+            att = upload_result_to_vk(vk, vk_api.VkUpload(vk), 0, src)
+            if att:
+                send(vk, vk_id, "📸 Вот твоё фото!", attachment=att)
+                return jsonify(ok=True)
+            return jsonify(error="upload_failed"), 500
+        except Exception as e:
+            print(f"[API] send-photo error: {e}")
+            return jsonify(error="internal_error"), 500
+
     @app.route("/api/pay", methods=["POST"])
     def api_pay():
         data = freq.get_json(silent=True) or {}
