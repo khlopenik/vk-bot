@@ -110,6 +110,11 @@ def get_user(vk_id: int) -> dict:
                 "pro_credits":     0,
                 "diamond_credits": 0,
                 "gift_credits":    0,
+                "nude_credits":    0,
+                "family_credits":  0,
+                "couples_credits": 0,
+                "video_credits":   0,
+                "music_credits":   0,
                 "ref_count":       0,
                 "ref_paid_count":  0,
                 "is_partner":      False,
@@ -139,13 +144,14 @@ def _load_credits_from_db(vk_id: int) -> None:
             f"{SUPABASE_URL}/rest/v1/user_credits",
             headers=_sb_headers(),
             params={"user_id": f"eq.{_db_id(vk_id)}",
-                    "select": "std_credits,v2_credits,pro_credits,diamond_credits,gift_credits,ref_count,ref_paid_count,is_partner,partner_pct,partner_paid"},
+                    "select": "std_credits,v2_credits,pro_credits,diamond_credits,gift_credits,nude_credits,family_credits,couples_credits,video_credits,music_credits,ref_count,ref_paid_count,is_partner,partner_pct,partner_paid"},
             timeout=10,
         )
         if r.ok and r.json():
             row = r.json()[0]
             u = user_data[vk_id]
             for k in ("std_credits","v2_credits","pro_credits","diamond_credits","gift_credits",
+                      "nude_credits","family_credits","couples_credits","video_credits","music_credits",
                       "ref_count","ref_paid_count","partner_pct"):
                 if row.get(k) is not None:
                     u[k] = row[k]
@@ -171,11 +177,11 @@ def _save_credits_to_db(vk_id: int) -> None:
                 "std_credits":     u.get("std_credits", 0),
                 "v2_credits":      u.get("v2_credits", 0),
                 "pro_credits":     u.get("pro_credits", 0),
-                "nude_credits":    0,
-                "family_credits":  0,
-                "couples_credits": 0,
-                "video_credits":   0,
-                "music_credits":   0,
+                "nude_credits":    u.get("nude_credits", 0),
+                "family_credits":  u.get("family_credits", 0),
+                "couples_credits": u.get("couples_credits", 0),
+                "video_credits":   u.get("video_credits", 0),
+                "music_credits":   u.get("music_credits", 0),
                 "diamond_credits": u.get("diamond_credits", 0),
                 "gift_credits":    u.get("gift_credits", 0),
             },
@@ -210,15 +216,22 @@ SIZE_MAP = {
     "horiz": "landscape_16_9",
 }
 
-def start_generation(prompt: str, model_slug: str, image_url: str,
+def start_generation(prompt: str, model_slug: str, image_url,
                      input_type: str = "image_url", size: str = "vert") -> Optional[str]:
     body: dict = {}
     if prompt:
         body["prompt"] = prompt
     if image_url:
-        # images_list требует массив, image_url — строку
-        body[input_type] = [image_url] if input_type == "images_list" else image_url
-    # image_size поддерживается только text-to-image моделями, не i2i
+        # images_list требует массив, image_url — строку.
+        # image_url может прийти строкой или списком (семейный multi).
+        if input_type == "images_list":
+            body[input_type] = image_url if isinstance(image_url, list) else [image_url]
+        else:
+            body[input_type] = image_url[0] if isinstance(image_url, list) else image_url
+    # image_size поддерживается только text-to-image моделями, не i2i.
+    # gpt4o капризен к aspect_ratio (только 1:1/2:3/3:2) — никогда не навязываем формат.
+    if "gpt4o" in model_slug:
+        body.pop("aspect_ratio", None)
     try:
         resp = requests.post(f"{MUAPI_URL}/{model_slug}",
                              headers=MUAPI_HEADERS, json=body, timeout=30)
@@ -253,8 +266,15 @@ def poll_result(request_id: str, max_attempts: int = 60) -> Optional[str]:
 CREDIT_KEY = {"std": "std_credits", "v2": "v2_credits", "pro": "pro_credits"}
 QUALITY_DIA_COST = {"std": 79, "v2": 99, "pro": 149}  # алмазов за 1 генерацию
 
+FAMILY_DIA_COST = 99  # алмазов за 1 семейный портрет (gpt4o), если нет family/gift кредитов
+
 def has_credits(vk_id: int, model_key: str) -> bool:
     u = get_user(vk_id)
+    if model_key == "family":
+        # Семейный портрет: family → gift → алмазы (как в TG)
+        return (u.get("family_credits", 0) > 0
+                or u.get("gift_credits", 0) > 0
+                or u.get("diamond_credits", 0) >= FAMILY_DIA_COST)
     if model_key in DIAMOND_MODELS:
         cost = DIAMOND_MODELS[model_key][1]
         return u.get("diamond_credits", 0) >= cost
@@ -267,6 +287,16 @@ def has_credits(vk_id: int, model_key: str) -> bool:
 
 def deduct_credit(vk_id: int, model_key: str) -> None:
     u = get_user(vk_id)
+    if model_key == "family":
+        # Семейный портрет: family → gift → алмазы (как в TG)
+        if u.get("family_credits", 0) > 0:
+            u["family_credits"] -= 1
+        elif u.get("gift_credits", 0) > 0:
+            u["gift_credits"] -= 1
+        else:
+            u["diamond_credits"] = max(0, u.get("diamond_credits", 0) - FAMILY_DIA_COST)
+        _save_credits_to_db(vk_id)
+        return
     if model_key in DIAMOND_MODELS:
         cost = DIAMOND_MODELS[model_key][1]
         u["diamond_credits"] = max(0, u.get("diamond_credits", 0) - cost)
@@ -981,6 +1011,7 @@ def make_flask_app(vk):
             pro_credits=u.get("pro_credits", 0),
             diamond_credits=u.get("diamond_credits", 0),
             gift_credits=u.get("gift_credits", 0),
+            family_credits=u.get("family_credits", 0),
             ref_count=u.get("ref_count", 0),
             ref_paid_count=u.get("ref_paid_count", 0),
             is_partner=u.get("is_partner", False),
@@ -1169,13 +1200,20 @@ def make_flask_app(vk):
         except (TypeError, ValueError):
             return jsonify(error="bad vk_id"), 400
         photo_url  = data.get("photo_url")
+        # Семейный multi: массив отдельных фото (по человеку) → MuAPI images_list
+        photo_urls = data.get("photo_urls") or ([photo_url] if photo_url else [])
+        photo_urls = [u for u in photo_urls if u]
         model_key  = data.get("model_key")
         prompt     = data.get("prompt", "") or ""
         size       = data.get("size", "vert") or "vert"
-        if not (vk_id and photo_url and model_key):
-            return jsonify(error="vk_id, photo_url, model_key required"), 400
+        if not (vk_id and photo_urls and model_key):
+            return jsonify(error="vk_id, photo_url(s), model_key required"), 400
 
-        if model_key in DIAMOND_MODELS:
+        if model_key == "family":
+            # Семейный портрет — всегда через gpt4o, биллинг family→gift→алмазы
+            slug, param_name = "gpt4o-image-to-image", "images_list"
+            supports_image = True
+        elif model_key in DIAMOND_MODELS:
             entry = DIAMOND_MODELS[model_key]
             slug, cost, label = entry[0], entry[1], entry[2]
             param_name = entry[3] if len(entry) > 3 else "image_url"
@@ -1188,8 +1226,11 @@ def make_flask_app(vk):
         if not has_credits(vk_id, model_key):
             return jsonify(error="no_credits"), 402
 
+        # Для images_list отдаём все фото; иначе берём первое
+        media = photo_urls if param_name == "images_list" else photo_urls[0]
+
         try:
-            req_id = start_generation(prompt, slug, photo_url, param_name, size)
+            req_id = start_generation(prompt, slug, media, param_name, size)
             if not req_id:
                 return jsonify(error="generation_start_failed"), 500
             result_url = poll_result(req_id)
@@ -1261,7 +1302,7 @@ def make_flask_app(vk):
             params = {
                 "active": "eq.true",
                 "order":  "hot.desc,created_at.desc",
-                "select": "id,name,prompt,photo_url,input_label,photo_count,photo_hint,collage_example_url,quality_modes,category_key,hot",
+                "select": "id,name,prompt,photo_url,input_label,photo_count,photo_hint,collage_example_url,quality_modes,category_key,hot,upload_mode",
             }
             if category_key != "all":
                 params["category_key"] = f"eq.{category_key}"
@@ -1271,6 +1312,11 @@ def make_flask_app(vk):
                 params=params,
                 timeout=10,
             )
+            # Фолбэк: если колонки upload_mode нет в общей БД — повторяем без неё
+            if not r.ok and "upload_mode" in (r.text or ""):
+                params["select"] = params["select"].replace(",upload_mode", "")
+                r = requests.get(f"{SUPABASE_URL}/rest/v1/styles",
+                                 headers=_sb_headers(), params=params, timeout=10)
             styles = r.json() if r.ok else []
             import urllib.parse as _up
             proxy = "https://vk-bot-2vns.onrender.com/api/img?src="
@@ -1312,6 +1358,7 @@ def make_flask_app(vk):
                 collage_example_url=_p(s.get("collage_example_url", "")),
                 quality_modes=s.get("quality_modes", "std,v2,pro") or "std,v2,pro",
                 category_key=s.get("category_key", ""),
+                upload_mode=s.get("upload_mode", "single") or "single",
             )
         except Exception as e:
             print(f"[API] style-one error: {e}")
