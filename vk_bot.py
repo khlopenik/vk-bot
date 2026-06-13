@@ -895,6 +895,31 @@ def make_flask_app(vk):
         return jsonify(ok=True)
 
     # ── Mini App API ──────────────────────────────────────────────────────
+    @app.route("/api/upload-photo", methods=["POST"])
+    def api_upload_photo():
+        """Принимает файл изображения, сохраняет временно, отдаёт публичный URL."""
+        import uuid, os, pathlib
+        f = freq.files.get("photo")
+        if not f:
+            return jsonify(error="no file"), 400
+        ext = pathlib.Path(f.filename or "x.jpg").suffix or ".jpg"
+        uid = uuid.uuid4().hex
+        tmp_dir = "/tmp/frame_uploads"
+        os.makedirs(tmp_dir, exist_ok=True)
+        path = f"{tmp_dir}/{uid}{ext}"
+        f.save(path)
+        public_url = f"https://vk-bot-2vns.onrender.com/api/photo/{uid}{ext}"
+        return jsonify(url=public_url)
+
+    @app.route("/api/photo/<filename>", methods=["GET"])
+    def api_photo(filename):
+        import os
+        from flask import send_file
+        path = f"/tmp/frame_uploads/{filename}"
+        if not os.path.exists(path):
+            return "Not found", 404
+        return send_file(path)
+
     @app.route("/api/me", methods=["GET"])
     def api_me():
         try:
