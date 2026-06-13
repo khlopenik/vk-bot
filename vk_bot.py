@@ -31,14 +31,14 @@ VK_ID_OFFSET = 10_000_000_000
 
 # ─── Модели ───────────────────────────────────────────────────────────────────
 GALLERY_MODELS = {
-    "std": ("nano-banana-edit",        "image_url", True,  "⭐ Стандарт"),
-    "v2":  ("nano-banana-2-edit",      "image_url", True,  "✨ Версия 2"),
-    "pro": ("nano-banana-pro-edit",    "image_url", True,  "💎 Про"),
+    "std": ("nano-banana-edit",        "image_url",    True,  "⭐ Стандарт"),
+    "v2":  ("nano-banana-2-edit",      "images_list",  True,  "✨ Версия 2"),
+    "pro": ("nano-banana-pro-edit",    "image_url",    True,  "💎 Про"),
 }
 
 DIAMOND_MODELS = {
     "nb_edit":   ("nano-banana-edit",                     79,  "⭐ Nano Banana"),
-    "nb2_edit":  ("nano-banana-2-edit",                   99,  "✨ Nano Banana 2"),
+    "nb2_edit":  ("nano-banana-2-edit",                   99,  "✨ Nano Banana 2",  "images_list"),
     "nbpro":     ("nano-banana-pro-edit",                149,  "💎 Nano Banana Pro"),
     "gpt4o":     ("gpt4o-image-to-image",                 99,  "🤖 GPT-4o"),
     "gpt_img2":  ("gpt-image-2-image-to-image",          199,  "🤖 GPT Image 2"),
@@ -216,7 +216,8 @@ def start_generation(prompt: str, model_slug: str, image_url: str,
     if prompt:
         body["prompt"] = prompt
     if image_url:
-        body[input_type] = image_url
+        # images_list требует массив, image_url — строку
+        body[input_type] = [image_url] if input_type == "images_list" else image_url
     # image_size поддерживается только text-to-image моделями, не i2i
     try:
         resp = requests.post(f"{MUAPI_URL}/{model_slug}",
@@ -1114,8 +1115,10 @@ def make_flask_app(vk):
             return jsonify(error="vk_id, photo_url, model_key required"), 400
 
         if model_key in DIAMOND_MODELS:
-            slug, cost, label = DIAMOND_MODELS[model_key]
-            param_name, supports_image = "image_url", True
+            entry = DIAMOND_MODELS[model_key]
+            slug, cost, label = entry[0], entry[1], entry[2]
+            param_name = entry[3] if len(entry) > 3 else "image_url"
+            supports_image = True
         elif model_key in GALLERY_MODELS:
             slug, param_name, supports_image, label = GALLERY_MODELS[model_key]
         else:
