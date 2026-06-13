@@ -1136,6 +1136,20 @@ def make_flask_app(vk):
                 return jsonify(error="generation_failed"), 500
             deduct_credit(vk_id, model_key)
             _save_history(vk_id, prompt, result_url)
+            # Отправляем результат в чат пользователю без сжатия (как документ)
+            try:
+                import urllib.request, tempfile, os
+                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                    urllib.request.urlretrieve(result_url, tmp.name)
+                    tmp_path = tmp.name
+                upload = vk_api.VkUpload(vk)
+                docs = upload.document_message(tmp_path, peer_id=vk_id, title="FRAME фото")
+                os.unlink(tmp_path)
+                attach = f"doc{docs[0]['owner_id']}_{docs[0]['id']}"
+                send(vk, vk_id, "✨ Ваше фото готово!", attachment=attach)
+            except Exception as se:
+                print(f"[API] send_result error: {se}")
+                send(vk, vk_id, f"✨ Ваше фото готово!\n{result_url}")
             return jsonify(result_url=result_url)
         except Exception as e:
             print(f"[API] generate error: {e}")
