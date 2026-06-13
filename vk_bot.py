@@ -202,13 +202,23 @@ def _save_history(vk_id: int, prompt: str, result_url: str) -> None:
         print(f"[DB] save_history error: {e}")
 
 # ─── MuAPI ────────────────────────────────────────────────────────────────────
+SIZE_MAP = {
+    "sq":    "square_hd",
+    "34":    "portrait_4_3",
+    "vert":  "portrait_16_9",
+    "43":    "landscape_4_3",
+    "horiz": "landscape_16_9",
+}
+
 def start_generation(prompt: str, model_slug: str, image_url: str,
-                     input_type: str = "image_url") -> Optional[str]:
+                     input_type: str = "image_url", size: str = "vert") -> Optional[str]:
     body: dict = {}
     if prompt:
         body["prompt"] = prompt
     if image_url:
         body[input_type] = image_url
+    image_size = SIZE_MAP.get(size, "portrait_16_9")
+    body["image_size"] = image_size
     try:
         resp = requests.post(f"{MUAPI_URL}/{model_slug}",
                              headers=MUAPI_HEADERS, json=body, timeout=30)
@@ -1098,6 +1108,7 @@ def make_flask_app(vk):
         photo_url  = data.get("photo_url")
         model_key  = data.get("model_key")
         prompt     = data.get("prompt", "") or ""
+        size       = data.get("size", "vert") or "vert"
         if not (vk_id and photo_url and model_key):
             return jsonify(error="vk_id, photo_url, model_key required"), 400
 
@@ -1113,7 +1124,7 @@ def make_flask_app(vk):
             return jsonify(error="no_credits"), 402
 
         try:
-            req_id = start_generation(prompt, slug, photo_url, param_name)
+            req_id = start_generation(prompt, slug, photo_url, param_name, size)
             if not req_id:
                 return jsonify(error="generation_start_failed"), 500
             result_url = poll_result(req_id)
