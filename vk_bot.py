@@ -1381,6 +1381,84 @@ def make_flask_app(vk):
         send(vk, vk_id, f"✅ Оплата получена!\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
         return jsonify(ok=True)
 
+    @app.route("/api/yk-credit-vk", methods=["POST"])
+    def yk_credit_vk():
+        """Вызывается TG-ботом: ЮKassa-вебхук общий для TG и VK, но шлёт
+        уведомления на URL TG-бота. Если в metadata платежа есть vk_id/tariff
+        (не user_id/tariff_key), TG-бот пробрасывает payment_id сюда."""
+        data = freq.get_json(silent=True) or {}
+        payment_id = data.get("payment_id")
+        if not payment_id or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
+            return jsonify(ok=False), 400
+
+        try:
+            r = requests.get(
+                f"https://api.yookassa.ru/v3/payments/{payment_id}",
+                auth=(YOKASSA_SHOP_ID, YOKASSA_KEY),
+                timeout=10,
+            )
+            if not r.ok:
+                return jsonify(ok=False), 502
+            verified = r.json()
+        except Exception as e:
+            print(f"[YK-VK] verify error: {e}")
+            return jsonify(ok=False), 500
+
+        if verified.get("status") != "succeeded":
+            return jsonify(ok=False, reason="not_succeeded")
+
+        meta = verified.get("metadata", {}) or {}
+        vk_id_str = meta.get("vk_id")
+        tariff_key = meta.get("tariff")
+        if not vk_id_str or not tariff_key:
+            return jsonify(ok=False, reason="no_metadata")
+        vk_id = int(vk_id_str)
+
+        # Идемпотентность: payment_id уже обработан?
+        try:
+            check = requests.get(
+                f"{SUPABASE_URL}/rest/v1/payments",
+                headers=_sb_headers(),
+                params={"payment_id": f"eq.{payment_id}", "select": "id"},
+                timeout=10,
+            )
+            if check.ok and check.json():
+                return jsonify(ok=True, already=True)
+        except Exception as e:
+            print(f"[YK-VK] idempotency check error: {e}")
+
+        ensure_dynamic_tariff(tariff_key)
+        if tariff_key not in TARIFF_PRICES:
+            return jsonify(ok=False, reason="unknown_tariff")
+
+        label, _, _, price = TARIFF_PRICES[tariff_key]
+        paid = float(verified.get("amount", {}).get("value", "0") or 0)
+        if paid < price * 0.05:
+            return jsonify(ok=False, reason="amount_mismatch")
+
+        msg = add_credits(vk_id, tariff_key)
+        send(vk, vk_id, f"✅ Оплата получена!\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
+
+        try:
+            requests.post(
+                f"{SUPABASE_URL}/rest/v1/payments",
+                headers={**_sb_headers(), "Prefer": "return=minimal"},
+                json={
+                    "user_id":      _db_id(vk_id),
+                    "amount":       str(paid),
+                    "tariff_key":   tariff_key,
+                    "tariff_label": label,
+                    "tg_name":      "",
+                    "tg_username":  "",
+                    "payment_id":   payment_id,
+                },
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"[YK-VK] record payment error: {e}")
+
+        return jsonify(ok=True)
+
     return app
 
 # ─── Главный цикл ─────────────────────────────────────────────────────────────
