@@ -190,6 +190,64 @@ def _save_credits_to_db(vk_id: int) -> None:
     except Exception as e:
         print(f"[DB] save_credits error: {e}")
 
+# ── Профиль VK + уведомление о новом пользователе ─────────────────────────────
+_known_vk_ids: set = set()   # кого уже обработали в этом процессе (не дёргаем VK API на каждое сообщение)
+
+def _vk_user_exists_in_db(vk_id: int) -> bool:
+    """Есть ли уже строка в user_credits. Без БД — считаем «не новый», чтобы не слать ложные уведомления."""
+    if not SUPABASE_URL:
+        return True
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/user_credits",
+            headers=_sb_headers(),
+            params={"user_id": f"eq.{_db_id(vk_id)}", "select": "user_id", "limit": "1"},
+            timeout=10,
+        )
+        return bool(r.ok and r.json())
+    except Exception:
+        return True
+
+def _save_vk_profile(vk_id: int, name: str, screen: str) -> None:
+    """Пишет имя/ссылку в user_credits (merge-duplicates не трогает кредиты)."""
+    if not SUPABASE_URL:
+        return
+    try:
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/user_credits",
+            headers={**_sb_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+            json={"user_id": _db_id(vk_id), "tg_name": name[:200], "tg_username": screen[:100]},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[VK profile] save error: {e}")
+
+def register_vk_user(vk, vk_id: int) -> None:
+    """Один раз за процесс на пользователя: тянет имя из VK, сохраняет в профиль,
+    и если пользователь новый (нет строки в БД) — уведомляет админа."""
+    if vk_id <= 0 or vk_id in _known_vk_ids:
+        return
+    _known_vk_ids.add(vk_id)
+    is_new = not _vk_user_exists_in_db(vk_id)
+    name, screen = "", ""
+    try:
+        info = vk.users.get(user_ids=vk_id, fields="screen_name")
+        if info:
+            p = info[0]
+            name   = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+            screen = p.get("screen_name", "") or f"id{vk_id}"
+    except Exception as e:
+        print(f"[VK profile] users.get error: {e}")
+    _save_vk_profile(vk_id, name, screen)
+    if is_new and ADMIN_VK_ID:
+        try:
+            send(vk, ADMIN_VK_ID,
+                 f"🆕 Новый пользователь ВК\n\n"
+                 f"{name or 'без имени'}\n"
+                 f"👉 vk.com/{screen or ('id' + str(vk_id))}")
+        except Exception as e:
+            print(f"[VK profile] notify error: {e}")
+
 def _save_history(vk_id: int, prompt: str, result_url: str) -> None:
     if not SUPABASE_URL:
         return
@@ -1526,6 +1584,12 @@ def main():
                 msg = event.object.message
                 vk_id = msg["from_id"]
                 text = msg.get("text", "")
+
+                # Профиль + уведомление о новом пользователе (один раз за процесс)
+                try:
+                    register_vk_user(vk, vk_id)
+                except Exception as _re:
+                    print(f"[register_vk_user] {_re}")
 
                 # Извлекаем фото из вложений
                 photo_url = None
