@@ -64,16 +64,12 @@ TARIFF_PRICES = {
     "pro_10":   ("💎 Про — 10 фото",            "pro",  10, 1190),
     "pro_30":   ("💎 Про — 30 фото",            "pro",  30, 2490),
     "pro_50":   ("💎 Про — 50 фото",            "pro",  50, 3990),
-    "nude_3":   ("🔞 Ню — 3 фото",             "nude",  3,  249),
-    "nude_5":   ("🔞 Ню — 5 фото",             "nude",  5,  390),
-    "nude_10":  ("🔞 Ню — 10 фото",            "nude", 10,  690),
-    "nude_20":  ("🔞 Ню — 20 фото",            "nude", 20, 1190),
     "family_1": ("👨‍👩‍👧 Семья — 1 портрет",     "family", 1,   390),
     "family_3": ("👨‍👩‍👧 Семья — 3 портрета",    "family", 3,   990),
     "family_5": ("👨‍👩‍👧 Семья — 5 портретов",   "family", 5,  1490),
-    "mix_start": ("📦 Начальный набор",  {"std": 10, "nude": 3, "family": 1}, 1,   990),
-    "mix_full":  ("📦 Полный набор",     {"std": 25, "nude": 7, "family": 3}, 1,  2490),
-    "mix_pro":   ("📦 Про набор",        {"std": 20, "pro": 10, "nude": 5, "family": 3}, 1, 3490),
+    "mix_start": ("📦 Начальный набор",  {"std": 13, "family": 1}, 1,   990),
+    "mix_full":  ("📦 Полный набор",     {"std": 32, "family": 3}, 1,  2490),
+    "mix_pro":   ("📦 Про набор",        {"std": 25, "pro": 10, "family": 3}, 1, 3490),
     "couples_std_1":  ("👫 Пары ⭐ — 1 фото",  "std",  1,   99),
     "couples_std_3":  ("👫 Пары ⭐ — 3 фото",  "std",  3,  270),
     "couples_std_5":  ("👫 Пары ⭐ — 5 фото",  "std",  5,  420),
@@ -421,12 +417,6 @@ def _builder_unit_price(cat: str, qty: int) -> int:
         if qty >= 30: return 83
         if qty >= 10: return 119
         return 149
-    if cat == "nude":
-        if qty >= 20: return 59
-        if qty >= 10: return 69
-        if qty >= 5:  return 78
-        if qty >= 3:  return 83
-        return 89
     if cat == "family":
         if qty >= 5: return 298
         if qty >= 3: return 330
@@ -445,18 +435,17 @@ def ensure_dynamic_tariff(tariff_key: str) -> bool:
     """Восстанавливает build_-тариф из ключа в TARIFF_PRICES. True если ключ валиден."""
     if tariff_key in TARIFF_PRICES:
         return True
-    # build_{std}_{v2}_{pro}_{nude}_{family}_{video}
+    # build_{std}_{v2}_{pro}_{family}_{video}
     if tariff_key.startswith("build_"):
         parts = tariff_key.split("_")
-        if len(parts) == 7:
+        if len(parts) == 6:
             try:
-                std_q, v2_q, pro_q, nude_q, fam_q, vid_q = (int(x) for x in parts[1:])
+                std_q, v2_q, pro_q, fam_q, vid_q = (int(x) for x in parts[1:])
             except ValueError:
                 return False
             total = (_builder_unit_price("std",    std_q) * std_q +
                      _builder_unit_price("v2",     v2_q)  * v2_q  +
                      _builder_unit_price("pro",    pro_q) * pro_q +
-                     _builder_unit_price("nude",   nude_q) * nude_q +
                      _builder_unit_price("family", fam_q) * fam_q +
                      _builder_unit_price("video",  vid_q) * vid_q)
             if total <= 0:
@@ -464,7 +453,7 @@ def ensure_dynamic_tariff(tariff_key: str) -> bool:
             desc = []
             ctype: dict = {}
             for q, key, lbl in ((std_q,"std","стандарт"), (v2_q,"v2","версия 2"),
-                                 (pro_q,"pro","про"), (nude_q,"nude","ню"),
+                                 (pro_q,"pro","про"),
                                  (fam_q,"family","семейных"), (vid_q,"video","оживлений")):
                 if q:
                     desc.append(f"{q} {lbl}")
