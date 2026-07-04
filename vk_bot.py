@@ -1237,7 +1237,9 @@ def make_flask_app(vk):
         except Exception as e:
             print(f"[PAY] ⚠️ Could not send: {e}")
 
-        return jsonify(ok=True, sent_to_chat=True)
+        # Возвращаем и саму ссылку ЮKassa — на vk.ru/m.vk.ru мини-апп открывает её
+        # напрямую (VKWebAppOpenLink с внешним URL), не завися от диалога с ботом.
+        return jsonify(ok=True, sent_to_chat=True, confirmation_url=link)
 
     @app.route("/api/generate", methods=["POST"])
     def api_generate():
