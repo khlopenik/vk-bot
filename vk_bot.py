@@ -29,6 +29,13 @@ MUAPI_HEADERS = {"x-api-key": MUAPI_KEY}
 # VK user_id смещается, чтобы не пересекаться с TG user_id в Supabase
 VK_ID_OFFSET = 10_000_000_000
 
+# Категории 18+, скрываемые в VK-версии (правила VK Mini Apps). БД общая с TG — там они нужны.
+NUDE_HIDDEN_KEYS = {"nude"}
+
+# Акция −50% (множитель к цене). Для обычных тарифов применяется в create_yookassa_link,
+# для build-конструктора — построчно в ensure_dynamic_tariff (там total хранится уже финальным).
+DISCOUNT_MULT = 0.5
+
 # ─── Модели ───────────────────────────────────────────────────────────────────
 GALLERY_MODELS = {
     "std": ("nano-banana-edit",        "images_list",  True,  "⭐ Стандарт"),
@@ -438,23 +445,26 @@ def ensure_dynamic_tariff(tariff_key: str) -> bool:
     # build_{std}_{v2}_{pro}_{family}_{video}
     if tariff_key.startswith("build_"):
         parts = tariff_key.split("_")
-        if len(parts) == 6:
+        # Формат: build_{std}_{v2}_{pro}_{family}_{video}_{couples} (7 частей)
+        if len(parts) == 7:
             try:
-                std_q, v2_q, pro_q, fam_q, vid_q = (int(x) for x in parts[1:])
+                std_q, v2_q, pro_q, fam_q, vid_q, cpl_q = (int(x) for x in parts[1:])
             except ValueError:
                 return False
-            total = (_builder_unit_price("std",    std_q) * std_q +
-                     _builder_unit_price("v2",     v2_q)  * v2_q  +
-                     _builder_unit_price("pro",    pro_q) * pro_q +
-                     _builder_unit_price("family", fam_q) * fam_q +
-                     _builder_unit_price("video",  vid_q) * vid_q)
+            # Скидка −50% применяется ПОСТРОЧНО с округлением вниз (int()) — идентично фронту,
+            # чтобы итог совпадал до рубля. total хранится уже СО скидкой (финальный).
+            def _line(cat, q):
+                return int(_builder_unit_price(cat, q) * DISCOUNT_MULT) * q
+            total = (_line("std", std_q) + _line("v2", v2_q) + _line("pro", pro_q) +
+                     _line("family", fam_q) + _line("video", vid_q) + _line("couples", cpl_q))
             if total <= 0:
                 return False
             desc = []
             ctype: dict = {}
             for q, key, lbl in ((std_q,"std","стандарт"), (v2_q,"v2","версия 2"),
                                  (pro_q,"pro","про"),
-                                 (fam_q,"family","семейных"), (vid_q,"video","оживлений")):
+                                 (fam_q,"family","семейных"), (vid_q,"video","оживлений"),
+                                 (cpl_q,"couples","парных")):
                 if q:
                     desc.append(f"{q} {lbl}")
                     ctype[key] = q
@@ -474,7 +484,8 @@ def create_yookassa_link(vk_id: int, tariff_key: str):
     if not t or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
         return None, "env_not_set"
     label, _, _, price = t
-    discounted = int(price * 0.5)
+    # build-конструктор уже хранит финальную цену со скидкой; обычные тарифы — со скидкой −50%
+    discounted = price if tariff_key.startswith("build_") else int(price * DISCOUNT_MULT)
     try:
         import uuid
         r = requests.post(
@@ -1331,6 +1342,9 @@ def make_flask_app(vk):
             )
             result = []
             for row in (r.json() if r.ok else []):
+                # VK: категорию 18+ («Ню») скрываем — правила VK. БД общая с TG, там она нужна.
+                if row.get("cat_key") in NUDE_HIDDEN_KEYS or "ню" in row.get("cat_name", "").lower():
+                    continue
                 name = row.get("cat_name", "")
                 parts = name.split(" ", 1)
                 if len(parts) == 2 and len(parts[0]) <= 3:
@@ -1346,6 +1360,9 @@ def make_flask_app(vk):
     @app.route("/api/styles/<category_key>", methods=["GET"])
     def api_styles(category_key):
         if not SUPABASE_URL:
+            return jsonify([])
+        # VK: категория 18+ скрыта — прямой запрос её стилей не отдаём
+        if category_key in NUDE_HIDDEN_KEYS:
             return jsonify([])
         try:
             params = {
@@ -1367,6 +1384,8 @@ def make_flask_app(vk):
                 r = requests.get(f"{SUPABASE_URL}/rest/v1/styles",
                                  headers=_sb_headers(), params=params, timeout=10)
             styles = r.json() if r.ok else []
+            # VK: при запросе "all" отсеиваем стили скрытой категории 18+
+            styles = [s for s in styles if s.get("category_key") not in NUDE_HIDDEN_KEYS]
             import urllib.parse as _up
             proxy = "https://vk-bot-2vns.onrender.com/api/img?src="
             for s in styles:
