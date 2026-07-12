@@ -101,6 +101,36 @@ FAILED_SENTINEL = "__FAILED__"
 user_data: dict = {}
 user_lock = threading.Lock()
 
+def _vk_has_consent(vk_id: int) -> bool:
+    """Уже соглашался раньше (в предыдущем процессе/до рестарта)?"""
+    if not SUPABASE_URL:
+        return False
+    try:
+        r = requests.get(
+            f"{SUPABASE_URL}/rest/v1/consent_log",
+            headers=_sb_headers(),
+            params={"user_id": f"eq.{_db_id(vk_id)}", "event": "eq.offer_agreed",
+                    "select": "id", "limit": "1"},
+            timeout=10,
+        )
+        return bool(r.ok and r.json())
+    except Exception:
+        return False
+
+def _log_consent(vk_id: int, event: str) -> None:
+    """Пишет факт согласия с меткой времени — доказательство при спорах/chargeback."""
+    if not SUPABASE_URL:
+        return
+    try:
+        requests.post(
+            f"{SUPABASE_URL}/rest/v1/consent_log",
+            headers=_sb_headers(),
+            json={"user_id": _db_id(vk_id), "platform": "vk", "event": event},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"[consent] log error: {e}")
+
 def get_user(vk_id: int) -> dict:
     with user_lock:
         if vk_id not in user_data:
@@ -126,6 +156,9 @@ def get_user(vk_id: int) -> dict:
                 "pd_consent":      False,
             }
             _load_credits_from_db(vk_id)
+            # Уже соглашался раньше (до рестарта процесса) — не спрашиваем повторно
+            if _vk_has_consent(vk_id):
+                user_data[vk_id]["pd_consent"] = True
         return user_data[vk_id]
 
 def _db_id(vk_id: int) -> int:
@@ -163,6 +196,10 @@ def _load_credits_from_db(vk_id: int) -> None:
             if row.get("partner_paid") is not None:
                 u["partner_paid"] = float(row["partner_paid"] or 0)
             if any(row.get(k, 0) for k in ("std_credits","v2_credits","pro_credits","diamond_credits")):
+                if not u.get("pd_consent"):
+                    # Честная пометка: НЕ явное согласие кнопкой, а факт использования
+                    # сервиса до введения экрана согласия.
+                    _log_consent(vk_id, "auto_grandfathered")
                 u["pd_consent"] = True
     except Exception as e:
         print(f"[DB] load_credits error: {e}")
@@ -595,6 +632,16 @@ def kb_cancel() -> str:
     kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
     return kb.get_keyboard()
 
+OFFER_URL = "https://tg-bot-hbly.onrender.com/offer"
+
+def kb_consent() -> str:
+    """Клавиатура экрана согласия с офертой — показывается ДО первого использования бота."""
+    kb = VkKeyboard(one_time=True)
+    kb.add_openlink_button("📄 Читать оферту", OFFER_URL)
+    kb.add_line()
+    kb.add_button("✅ Согласен(а)", VkKeyboardColor.POSITIVE)
+    return kb.get_keyboard()
+
 def kb_pay_link(link: str, label: str) -> str:
     """Клавиатура с кнопкой open_link для оплаты — НЕ голая ссылка."""
     kb = VkKeyboard(one_time=True)
@@ -697,11 +744,29 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
             send(vk, vk_id, f"✅ Тариф применён\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
             return
 
+    # ── Экран согласия с офертой — ДО любого использования бота ─────────────────
+    # Без явного нажатия «Согласен(а)» дальше не пускаем (кроме админа выше).
+    if not u.get("pd_consent"):
+        if t in ("✅ согласен(а)", "согласен(а)", "согласна", "согласен", "да, согласен", "да согласен"):
+            u["pd_consent"]  = True
+            u["bio_consent"] = True
+            _log_consent(vk_id, "offer_agreed")
+            _log_consent(vk_id, "bio_agreed")
+            send(vk, vk_id,
+                 "✅ Спасибо! Теперь можно пользоваться ботом.\n\n"
+                 "👋 Я FRAME — бот AI-фотосессий.\n\n"
+                 "Нажми кнопку ниже чтобы открыть приложение, или выбери действие:",
+                 keyboard=kb_main())
+        else:
+            send(vk, vk_id,
+                 "👋 Привет! Я FRAME — бот AI-фотосессий.\n\n"
+                 "Прежде чем начать, ознакомься с офертой и подтверди согласие 👇",
+                 keyboard=kb_consent())
+        return
+
     # ── Команды навигации (сбрасывают waiting_for) ───────────────────────────
     if t in ("начать", "старт", "/start", "привет", "start", "🔙 главное меню", "главное меню", "меню"):
         u["waiting_for"] = None
-        if not u.get("pd_consent"):
-            u["pd_consent"] = True
         send(vk, vk_id,
              "👋 Привет! Я FRAME — бот AI-фотосессий.\n\n"
              "Нажми кнопку ниже чтобы открыть приложение, или выбери действие:",
@@ -1612,7 +1677,13 @@ def main():
                         break
 
                 try:
-                    if photo_url:
+                    _u = get_user(vk_id)
+                    if photo_url and vk_id != ADMIN_VK_ID and not _u.get("pd_consent"):
+                        # Не даём загрузить фото в обход экрана согласия
+                        send(vk, vk_id,
+                             "Прежде чем начать, ознакомься с офертой и подтверди согласие 👇",
+                             keyboard=kb_consent())
+                    elif photo_url:
                         handle_photo(vk, upload, group_id, vk_id, photo_url)
                         if text:
                             handle_text(vk, upload, group_id, vk_id, text, event)
