@@ -36,6 +36,12 @@ NUDE_HIDDEN_KEYS = {"nude"}
 # для build-конструктора — построчно в ensure_dynamic_tariff (там total хранится уже финальным).
 DISCOUNT_MULT = 0.5
 
+# Промокоды: код → сколько бесплатных кредитов начислить (один раз на пользователя).
+# VKTEST — для краудсорсеров VK Testers на этапе модерации (проверить все функции без оплаты).
+PROMO_CODES = {
+    "VKTEST": {"std": 3, "v2": 3, "pro": 3, "family": 2, "video": 2, "couples": 2},
+}
+
 # ─── Модели ───────────────────────────────────────────────────────────────────
 GALLERY_MODELS = {
     "std": ("nano-banana-edit",        "images_list",  True,  "⭐ Стандарт"),
@@ -1243,6 +1249,59 @@ def make_flask_app(vk):
         except Exception as e:
             print(f"[API] history error: {e}")
             return jsonify(history=[])
+
+    @app.route("/api/promo", methods=["POST"])
+    def api_promo():
+        """Активация промокода: начисляет бесплатные кредиты один раз на пользователя."""
+        data = freq.get_json(silent=True) or {}
+        try:
+            vk_id = int(data.get("vk_id", 0))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="bad vk_id"), 400
+        code = (data.get("code") or "").strip().upper()
+        if not vk_id or not code:
+            return jsonify(ok=False, error="empty"), 400
+        reward = PROMO_CODES.get(code)
+        if not reward:
+            return jsonify(ok=False, error="not_found", msg="Промокод не найден")
+
+        # Уже активирован этим пользователем?
+        redeemed = ""
+        try:
+            r = requests.get(
+                f"{SUPABASE_URL}/rest/v1/user_credits",
+                headers=_sb_headers(),
+                params={"user_id": f"eq.{_db_id(vk_id)}", "select": "promo_redeemed"},
+                timeout=10,
+            )
+            rows = r.json() if r.ok else []
+            redeemed = (rows[0].get("promo_redeemed") or "") if rows else ""
+        except Exception as e:
+            print(f"[PROMO] read error: {e}")
+        if code in [c.strip() for c in redeemed.split(",") if c.strip()]:
+            return jsonify(ok=False, error="already", msg="Этот промокод уже активирован")
+
+        # Начисляем кредиты
+        u = get_user(vk_id)
+        for k, v in reward.items():
+            key = CREDIT_KEY.get(k, k + "_credits")
+            u[key] = u.get(key, 0) + v
+        _save_credits_to_db(vk_id)
+
+        # Помечаем код активированным (список кодов через запятую)
+        new_redeemed = f"{redeemed},{code}".strip(",") if redeemed else code
+        try:
+            requests.patch(
+                f"{SUPABASE_URL}/rest/v1/user_credits",
+                headers={**_sb_headers(), "Prefer": "return=minimal"},
+                params={"user_id": f"eq.{_db_id(vk_id)}"},
+                json={"promo_redeemed": new_redeemed},
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"[PROMO] mark error: {e}")
+
+        return jsonify(ok=True, msg="✅ Промокод активирован! Кредиты начислены 🎁")
 
     @app.route("/api/send-photo", methods=["POST"])
     def api_send_photo():
