@@ -38,9 +38,11 @@ DISCOUNT_MULT = 0.5
 
 # Промокоды: код → сколько бесплатных кредитов начислить (один раз на пользователя).
 # VKTEST — для краудсорсеров VK Testers на этапе модерации (проверить все функции без оплаты).
-# Промокоды отключены (передумали проходить катало­жную модерацию VK с массовым тестированием).
-# Чтобы снова включить — вернуть код в словарь, напр. "VKTEST": {"std":2,...}.
-PROMO_CODES = {}
+# Промокоды: код → {reward: сколько кредитов, max: лимит активаций ВСЕГО}.
+# VKTEST для тестеров VK — с жёстким лимитом 5 активаций, чтобы не раздать бесплатное сотням.
+PROMO_CODES = {
+    "VKTEST": {"reward": {"std": 2, "v2": 2, "pro": 2, "family": 2, "video": 2, "couples": 2}, "max": 5},
+}
 
 # ─── Модели ───────────────────────────────────────────────────────────────────
 GALLERY_MODELS = {
@@ -1261,9 +1263,11 @@ def make_flask_app(vk):
         code = (data.get("code") or "").strip().upper()
         if not vk_id or not code:
             return jsonify(ok=False, error="empty"), 400
-        reward = PROMO_CODES.get(code)
-        if not reward:
+        entry = PROMO_CODES.get(code)
+        if not entry:
             return jsonify(ok=False, error="not_found", msg="Промокод не найден")
+        reward = entry["reward"]
+        limit = entry.get("max")
 
         # Уже активирован этим пользователем?
         redeemed = ""
@@ -1280,6 +1284,22 @@ def make_flask_app(vk):
             print(f"[PROMO] read error: {e}")
         if code in [c.strip() for c in redeemed.split(",") if c.strip()]:
             return jsonify(ok=False, error="already", msg="Этот промокод уже активирован")
+
+        # Лимит активаций ВСЕГО (напр. только первые 5 человек) — считаем сколько уже активировали
+        if limit is not None:
+            try:
+                cr = requests.get(
+                    f"{SUPABASE_URL}/rest/v1/user_credits",
+                    headers={**_sb_headers(), "Prefer": "count=exact", "Range": "0-0"},
+                    params={"promo_redeemed": f"like.*{code}*", "select": "user_id"},
+                    timeout=10,
+                )
+                used = int(cr.headers.get("Content-Range", "*/0").split("/")[-1] or 0)
+            except Exception as e:
+                print(f"[PROMO] count error: {e}")
+                used = 0
+            if used >= limit:
+                return jsonify(ok=False, error="limit", msg="Лимит промокода исчерпан")
 
         # Начисляем кредиты
         u = get_user(vk_id)
