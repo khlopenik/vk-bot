@@ -1125,6 +1125,32 @@ def make_flask_app(vk):
             return "Not found", 404
         return send_file(path)
 
+    @app.route("/api/dbdiag", methods=["GET"])
+    def api_dbdiag():
+        """Диагностика подключения к Supabase (без утечки ключей — только длины/статусы)."""
+        info = {
+            "url_set": bool(SUPABASE_URL),
+            "url_len": len(SUPABASE_URL or ""),
+            "url_tail": (SUPABASE_URL or "")[-18:],
+            "key_set": bool(SUPABASE_KEY),
+            "key_len": len(SUPABASE_KEY or ""),
+            "key_head": (SUPABASE_KEY or "")[:6],
+            "key_tail": (SUPABASE_KEY or "")[-4:],
+        }
+        try:
+            r = requests.get(
+                f"{SUPABASE_URL}/rest/v1/gallery_categories",
+                headers=_sb_headers(),
+                params={"select": "cat_key", "limit": "1"},
+                timeout=12,
+            )
+            info["supabase_status"] = r.status_code
+            info["supabase_body"] = (r.text or "")[:150]
+        except Exception as e:
+            info["supabase_status"] = "EXCEPTION"
+            info["supabase_error"] = str(e)[:150]
+        return jsonify(info)
+
     @app.route("/api/me", methods=["GET"])
     def api_me():
         try:
