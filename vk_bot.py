@@ -673,7 +673,7 @@ _redirects: dict = {}
 def make_redirect_url(url: str) -> str:
     token = _secrets.token_urlsafe(8)
     _redirects[token] = url
-    return f"https://vk-bot-2vns.onrender.com/go/{token}"
+    return f"https://vk-bot-kkkhhl.amvera.io/go/{token}"
 
 # ─── VK утилиты ───────────────────────────────────────────────────────────────
 _rand = __import__("random").randint
@@ -1113,7 +1113,7 @@ def make_flask_app(vk):
         os.makedirs(tmp_dir, exist_ok=True)
         path = f"{tmp_dir}/{uid}{ext}"
         f.save(path)
-        public_url = f"https://vk-bot-2vns.onrender.com/api/photo/{uid}{ext}"
+        public_url = f"https://vk-bot-kkkhhl.amvera.io/api/photo/{uid}{ext}"
         return jsonify(url=public_url)
 
     @app.route("/api/photo/<filename>", methods=["GET"])
@@ -1443,7 +1443,7 @@ def make_flask_app(vk):
             deduct_credit(vk_id, model_key)
             # Прячем источник — отдаём URL через наш прокси
             import urllib.parse
-            proxied_url = f"https://vk-bot-2vns.onrender.com/api/img?src={urllib.parse.quote(result_url, safe='')}"
+            proxied_url = f"https://vk-bot-kkkhhl.amvera.io/api/img?src={urllib.parse.quote(result_url, safe='')}"
             _save_history(vk_id, prompt, proxied_url)
             # Отправляем результат в чат пользователю без сжатия (как документ)
             try:
@@ -1531,7 +1531,7 @@ def make_flask_app(vk):
             # VK: при запросе "all" отсеиваем стили скрытой категории 18+
             styles = [s for s in styles if s.get("category_key") not in NUDE_HIDDEN_KEYS]
             import urllib.parse as _up
-            proxy = "https://vk-bot-2vns.onrender.com/api/img?src="
+            proxy = "https://vk-bot-kkkhhl.amvera.io/api/img?src="
             for s in styles:
                 if s.get("photo_url"):
                     s["photo_url"] = proxy + _up.quote(s["photo_url"], safe="")
@@ -1557,7 +1557,7 @@ def make_flask_app(vk):
             if not s or "id" not in s:
                 return jsonify(ok=False), 404
             import urllib.parse as _up2
-            proxy = "https://vk-bot-2vns.onrender.com/api/img?src="
+            proxy = "https://vk-bot-kkkhhl.amvera.io/api/img?src="
             def _p(u): return (proxy + _up2.quote(u, safe="")) if u else ""
             return jsonify(
                 ok=True,
