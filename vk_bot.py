@@ -1090,24 +1090,42 @@ def make_flask_app(vk, upload, group_id):
         return jsonify(ok=True)
 
     # ── Mini App API ──────────────────────────────────────────────────────
+    def _is_safe_proxy_url(url: str) -> bool:
+        """Защита от SSRF/LFI: только http(s) на публичные адреса — блокирует
+        file://, приватные/loopback/link-local сети и облачный metadata-IP
+        169.254.169.254 (резолвим хост и проверяем ВСЕ полученные адреса)."""
+        import socket, ipaddress
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                return False
+            for info in socket.getaddrinfo(parsed.hostname, None):
+                ip = ipaddress.ip_address(info[4][0])
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+                    return False
+            return True
+        except Exception:
+            return False
+
     def _proxy_image(src: str, as_download: bool = False):
         """Общая логика прокси-изображений."""
         from flask import Response
-        import urllib.request
         if not src:
             return "missing src", 400
+        if not _is_safe_proxy_url(src):
+            return "forbidden url", 403
         try:
-            req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                data = r.read()
-                ct = r.headers.get("Content-Type", "image/jpeg")
+            r = requests.get(src, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=False)
+            if r.is_redirect:
+                return "redirects not allowed", 403
             headers = {
                 "Cache-Control": "public, max-age=86400",
                 "Access-Control-Allow-Origin": "*",
             }
             if as_download:
                 headers["Content-Disposition"] = "attachment; filename=\"frame_photo.jpg\""
-            return Response(data, content_type=ct, headers=headers)
+            return Response(r.content, content_type=r.headers.get("Content-Type", "image/jpeg"), headers=headers)
         except Exception as e:
             return f"proxy error: {e}", 502
 
