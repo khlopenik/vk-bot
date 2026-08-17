@@ -622,21 +622,6 @@ def kb_diamond_models() -> str:
     kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
     return kb.get_keyboard()
 
-def kb_tariffs_basic() -> str:
-    kb = VkKeyboard(one_time=True)
-    kb.add_button("🎁 Пробный 149₽", VkKeyboardColor.POSITIVE)
-    kb.add_line()
-    kb.add_button("⭐ Станд. 10 фото 590₽", VkKeyboardColor.SECONDARY)
-    kb.add_button("✨ Версия2 10 фото 790₽", VkKeyboardColor.SECONDARY)
-    kb.add_line()
-    kb.add_button("💎 Про 10 фото 1190₽", VkKeyboardColor.PRIMARY)
-    kb.add_line()
-    kb.add_button("🔷 Алмазы 500шт 490₽", VkKeyboardColor.SECONDARY)
-    kb.add_button("🔷 Алмазы 1500шт 1290₽", VkKeyboardColor.SECONDARY)
-    kb.add_line()
-    kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
-    return kb.get_keyboard()
-
 def kb_cancel() -> str:
     kb = VkKeyboard(one_time=True)
     kb.add_button("❌ Отмена", VkKeyboardColor.NEGATIVE)
@@ -860,17 +845,14 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
         send(vk, vk_id, credits_text(vk_id), keyboard=kb_main())
         return
 
-    if t in ("🛒 купить кредиты", "купить кредиты", "купить", "тарифы"):
-        u["waiting_for"] = "tariff_select"
+    if t in ("🛒 купить кредиты", "купить кредиты", "купить", "тарифы", "🛒 тарифы"):
+        # Оплата больше не идёт через чат — только через мини-апп (там платформа
+        # проверяется и оплата на нативных iOS/Android скрыта по требованию модерации VK).
+        u["waiting_for"] = None
         send(vk, vk_id,
-             "💳 Выберите тариф:\n\n"
-             "🎁 Пробный — 1⭐+1✨+1💎 за 149₽\n"
-             "⭐ Стандарт 10 — 590₽\n"
-             "✨ Версия2 10 — 790₽\n"
-             "💎 Про 10 — 1190₽\n"
-             "🔷 500 алмазов — 490₽\n"
-             "🔷 1500 алмазов — 1290₽",
-             keyboard=kb_tariffs_basic())
+             "💳 Все тарифы и оплата — в мини-аппе FRAME.\n\n"
+             "Нажми кнопку ниже, чтобы открыть 👇",
+             keyboard=kb_main())
         return
 
     if t in ("📸 генерация фото", "генерация фото", "генерировать", "генерация"):
@@ -883,36 +865,6 @@ def handle_text(vk, upload, group_id: int, vk_id: int, text: str, event) -> None
     if t in ("❌ отмена", "отмена", "cancel"):
         u["waiting_for"] = None
         send(vk, vk_id, "Отменено.", keyboard=kb_main())
-        return
-
-    # ── Выбор тарифа ──────────────────────────────────────────────────────────
-    if u.get("waiting_for") == "tariff_select":
-        tariff_map = {
-            "🎁 пробный 149₽":             "trial",
-            "⭐ станд. 10 фото 590₽":      "std_10",
-            "✨ версия2 10 фото 790₽":     "v2_10",
-            "💎 про 10 фото 1190₽":        "pro_10",
-            "🔷 алмазы 500шт 490₽":        "diamond_500",
-            "🔷 алмазы 1500шт 1290₽":      "diamond_1500",
-        }
-        tariff_key = tariff_map.get(t)
-        if tariff_key:
-            u["waiting_for"] = None
-            label_t = TARIFF_PRICES[tariff_key][0]
-            price = TARIFF_PRICES[tariff_key][3]
-            link, _ = create_yookassa_link(vk_id, tariff_key)
-            if link:
-                send(vk, vk_id,
-                     f"💳 {label_t} — {price}₽\n\n"
-                     "Нажми кнопку ниже для безопасной оплаты через ЮKassa.\n"
-                     "После оплаты кредиты зачислятся автоматически 💎",
-                     keyboard=kb_pay_link(make_redirect_url(link), label_t))
-            else:
-                send(vk, vk_id,
-                     "⚠️ Не удалось создать ссылку для оплаты. Напишите в сообщения сообщества.",
-                     keyboard=kb_main())
-        else:
-            send(vk, vk_id, "Выберите тариф из списка:", keyboard=kb_tariffs_basic())
         return
 
     # ── Выбор модели (галерея) ────────────────────────────────────────────────
