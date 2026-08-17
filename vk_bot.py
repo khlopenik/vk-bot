@@ -1350,6 +1350,18 @@ def make_flask_app(vk, upload, group_id):
             if used >= limit:
                 return jsonify(ok=False, error="limit", msg="Лимит промокода исчерпан")
 
+        # Гарантируем, что строка вообще существует — PATCH ниже не создаёт новых строк,
+        # а для совсем нового пользователя (ещё ни разу не сохранённого) строки может не быть.
+        try:
+            requests.post(
+                f"{SUPABASE_URL}/rest/v1/user_credits",
+                headers={**_sb_headers(), "Prefer": "resolution=merge-duplicates,return=minimal"},
+                json={"user_id": _db_id(vk_id)},
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"[PROMO] ensure-row error: {e}")
+
         # Атомарно резервируем код: PATCH с фильтром "код ещё не в списке" — Postgres
         # проверяет этот фильтр в момент самой записи (в рамках одной блокировки строки),
         # так что при гонке параллельных запросов выиграть может только один.
