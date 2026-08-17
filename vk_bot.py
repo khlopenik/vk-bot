@@ -9,7 +9,7 @@ import threading
 import json
 import requests
 import vk_api
-from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
+from vk_api.bot_longpoll import VkBotEventType, VkBotEvent
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 from vk_api import VkUpload
 from typing import Optional
@@ -22,6 +22,8 @@ SUPABASE_KEY    = os.environ.get("SUPABASE_KEY", "")
 YOKASSA_SHOP_ID = os.environ.get("YOKASSA_SHOP_ID", "")
 YOKASSA_KEY     = os.environ.get("YOKASSA_KEY", "")
 ADMIN_VK_ID     = int(os.environ.get("ADMIN_VK_ID", "0"))
+VK_CALLBACK_CONFIRMATION = os.environ.get("VK_CALLBACK_CONFIRMATION", "")  # строка из настроек Callback API
+VK_CALLBACK_SECRET       = os.environ.get("VK_CALLBACK_SECRET", "")       # секретный ключ (опционально)
 
 MUAPI_URL = "https://api.muapi.ai/api/v1"
 MUAPI_HEADERS = {"x-api-key": MUAPI_KEY}
@@ -1033,8 +1035,54 @@ def handle_photo(vk, upload, group_id: int, vk_id: int, photo_url: str) -> None:
         u["waiting_for"] = "model_select"
         send(vk, vk_id, "📸 Фото сохранено! Выберите модель:", keyboard=kb_model_choice())
 
-# ─── Webhook для YooKassa (нужен Flask) ──────────────────────────────────────
-def make_flask_app(vk):
+def process_message_event(vk, upload, group_id, event) -> None:
+    """Обрабатывает одно событие message_new — общая логика для Callback API."""
+    if event.type != VkBotEventType.MESSAGE_NEW:
+        return
+
+    msg = event.object.message
+    vk_id = msg["from_id"]
+    text = msg.get("text", "")
+
+    # Профиль + уведомление о новом пользователе (один раз за процесс)
+    try:
+        register_vk_user(vk, vk_id)
+    except Exception as _re:
+        print(f"[register_vk_user] {_re}")
+
+    # Извлекаем фото из вложений
+    photo_url = None
+    for att in msg.get("attachments", []):
+        if att.get("type") == "photo":
+            sizes = att["photo"].get("sizes", [])
+            if sizes:
+                best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
+                photo_url = best.get("url")
+            break
+
+    try:
+        _u = get_user(vk_id)
+        if photo_url and vk_id != ADMIN_VK_ID and not _u.get("pd_consent"):
+            # Не даём загрузить фото в обход экрана согласия
+            send(vk, vk_id,
+                 "Прежде чем начать, ознакомься с офертой и подтверди согласие 👇",
+                 keyboard=kb_consent())
+        elif photo_url:
+            handle_photo(vk, upload, group_id, vk_id, photo_url)
+            if text:
+                handle_text(vk, upload, group_id, vk_id, text, event)
+        elif text:
+            handle_text(vk, upload, group_id, vk_id, text, event)
+    except Exception as e:
+        print(f"[process_message_event] error for vk_id={vk_id}: {e}")
+        try:
+            send(vk, vk_id, "❌ Произошла ошибка. Попробуйте снова.", keyboard=kb_main())
+        except Exception:
+            pass
+
+
+# ─── Webhook для YooKassa и VK Callback API (нужен Flask) ────────────────────
+def make_flask_app(vk, upload, group_id):
     """Flask для получения YooKassa webhook."""
     try:
         from flask import Flask, request as freq, jsonify
@@ -1054,6 +1102,29 @@ def make_flask_app(vk):
     @app.route("/ping", methods=["GET"])
     def _ping():
         return jsonify({"ok": True}), 200
+
+    @app.route("/vk-callback", methods=["POST"])
+    def _vk_callback():
+        """VK Callback API — заменяет Long Poll, работает и на засыпающем хостинге."""
+        data = freq.get_json(force=True, silent=True) or {}
+
+        if VK_CALLBACK_SECRET and data.get("secret") != VK_CALLBACK_SECRET:
+            return "forbidden", 403
+
+        if data.get("type") == "confirmation":
+            return VK_CALLBACK_CONFIRMATION
+
+        try:
+            event = VkBotEvent(data)
+            threading.Thread(
+                target=process_message_event,
+                args=(vk, upload, group_id, event),
+                daemon=True,
+            ).start()
+        except Exception as e:
+            print(f"[vk-callback] error: {e}")
+
+        return "ok"
 
     @app.after_request
     def _cors(resp):
@@ -1739,76 +1810,15 @@ def main():
         print(f"⚠️ Не удалось получить group_id: {e}")
         group_id = 0
 
-    # Flask для YooKassa webhook (запускаем в фоне)
+    # Flask + VK Callback API (заменяет Long Poll) — единственное, что держит процесс
     port = int(os.environ.get("PORT", "") or "5000")
-    flask_app = make_flask_app(vk)
-    if flask_app:
-        t = threading.Thread(
-            target=lambda: flask_app.run(host="0.0.0.0", port=port, use_reloader=False),
-            daemon=True
-        )
-        t.start()
-        print(f"✅ Flask webhook на порту {port}")
+    flask_app = make_flask_app(vk, upload, group_id)
+    if not flask_app:
+        print("❌ Flask недоступен")
+        return
 
-    while True:
-        try:
-            print(f"🔄 Инициализация Long Poll (group_id={group_id})...")
-            longpoll = VkBotLongPoll(vk_session, group_id, wait=25)
-            print("🔄 Long Poll запущен, жду сообщений...")
-
-            for event in longpoll.listen():
-                print(f"📩 Событие: {event.type}")
-                if event.type != VkBotEventType.MESSAGE_NEW:
-                    continue
-
-                msg = event.object.message
-                vk_id = msg["from_id"]
-                text = msg.get("text", "")
-
-                # Профиль + уведомление о новом пользователе (один раз за процесс)
-                try:
-                    register_vk_user(vk, vk_id)
-                except Exception as _re:
-                    print(f"[register_vk_user] {_re}")
-
-                # Извлекаем фото из вложений
-                photo_url = None
-                for att in msg.get("attachments", []):
-                    if att.get("type") == "photo":
-                        sizes = att["photo"].get("sizes", [])
-                        if sizes:
-                            best = sorted(sizes, key=lambda s: s.get("width", 0))[-1]
-                            photo_url = best.get("url")
-                        break
-
-                try:
-                    _u = get_user(vk_id)
-                    if photo_url and vk_id != ADMIN_VK_ID and not _u.get("pd_consent"):
-                        # Не даём загрузить фото в обход экрана согласия
-                        send(vk, vk_id,
-                             "Прежде чем начать, ознакомься с офертой и подтверди согласие 👇",
-                             keyboard=kb_consent())
-                    elif photo_url:
-                        handle_photo(vk, upload, group_id, vk_id, photo_url)
-                        if text:
-                            handle_text(vk, upload, group_id, vk_id, text, event)
-                    elif text:
-                        handle_text(vk, upload, group_id, vk_id, text, event)
-                except Exception as e:
-                    print(f"[main] error for vk_id={vk_id}: {e}")
-                    try:
-                        send(vk, vk_id, "❌ Произошла ошибка. Попробуйте снова.", keyboard=kb_main())
-                    except Exception:
-                        pass
-
-        except (KeyboardInterrupt, SystemExit):
-            print("🛑 Остановка бота")
-            break
-        except Exception as e:
-            print(f"❌ Long Poll error: {type(e).__name__}: {e}")
-            import traceback; traceback.print_exc()
-            print("⏳ Перезапуск через 5 секунд...")
-            time.sleep(5)
+    print(f"✅ Callback API слушает /vk-callback на порту {port}")
+    flask_app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 
 if __name__ == "__main__":

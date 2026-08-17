@@ -8,16 +8,35 @@
 > - БД Supabase общая с TG, но код ботов раздельный. Не смешивай.
 
 ## Стек
-- Python 3, vk-api (Long Poll), Flask (YooKassa webhook)
+- Python 3, vk-api (VK Callback API — вебхук, НЕ Long Poll), Flask (YooKassa + VK webhook)
 - Supabase (общая БД с TG-ботом) — VK user_id хранится как `vk_id + 10_000_000_000`
 - MuAPI — та же что и в TG-боте
 - YooKassa — платёж через redirect link (не инлайн как в TG)
-- Деплой: Render.com
+- Деплой: бесплатный хостинг с автозасыпанием (Render.com и т.п.) — совместимо, т.к. бот
+  на Callback API, а не Long Poll (постоянное соединение не нужно)
+
+## Архитектура: Callback API вместо Long Poll (17.08.2026)
+Раньше бот слушал VK через `VkBotLongPoll` в фоновом потоке — это требует постоянно
+работающего процесса. На бесплатном хостинге, который засыпает при простое, поток обрывался
+и бот переставал отвечать (вероятная причина части багов в тестировании VK Testers).
+Переписано на **VK Callback API**: VK сам делает POST на `/vk-callback` при каждом событии,
+процесс не обязан быть всегда включён — хостинг может «спать» и просыпаться по запросу.
+Формат JSON у Callback API идентичен Long Poll, поэтому вся логика обработки сообщений
+(`handle_text`, `handle_photo`) не изменилась — просто событие оборачивается в `VkBotEvent(data)`
+из `vk_api.bot_longpoll` и передаётся в `process_message_event()`.
+
+### Настройка в кабинете VK (сделать один раз после деплоя)
+1. Управление сообществом → Работа с API → Callback API
+2. URL сервера: `https://<хост>/vk-callback`
+3. VK покажет строку подтверждения — вписать её в env `VK_CALLBACK_CONFIRMATION`, нажать
+   «Подтвердить»
+4. Включить тип события «Новое сообщение» (message_new)
+5. (Опционально) секретный ключ — вписать тот же в env `VK_CALLBACK_SECRET`
 
 ## Файлы
 - `vk_bot.py` — всё в одном файле (бот + Flask webhook)
 
-## Env переменные (Render)
+## Env переменные
 - `VK_TOKEN` — токен сообщества ВКонтакте
 - `MUAPI_KEY` — тот же что в TG-боте
 - `SUPABASE_URL` — тот же что в TG-боте
@@ -25,7 +44,9 @@
 - `YOKASSA_SHOP_ID` — тот же что в TG-боте
 - `YOKASSA_KEY` — тот же что в TG-боте
 - `ADMIN_VK_ID` — ВКонтакте ID администратора
-- `PORT` — порт Flask (Render задаёт автоматически)
+- `VK_CALLBACK_CONFIRMATION` — строка подтверждения из настроек Callback API (VK её выдаёт)
+- `VK_CALLBACK_SECRET` — секретный ключ Callback API (опционально, но желательно)
+- `PORT` — порт Flask (хостинг задаёт автоматически)
 
 ## Supabase
 - Таблица `user_credits` — та же что в TG, VK IDs смещены на +10_000_000_000
