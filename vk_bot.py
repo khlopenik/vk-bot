@@ -1350,25 +1350,32 @@ def make_flask_app(vk, upload, group_id):
             if used >= limit:
                 return jsonify(ok=False, error="limit", msg="Лимит промокода исчерпан")
 
-        # Начисляем кредиты
+        # Атомарно резервируем код: PATCH с фильтром "код ещё не в списке" — Postgres
+        # проверяет этот фильтр в момент самой записи (в рамках одной блокировки строки),
+        # так что при гонке параллельных запросов выиграть может только один.
+        new_redeemed = f"{redeemed},{code}".strip(",") if redeemed else code
+        try:
+            pr = requests.patch(
+                f"{SUPABASE_URL}/rest/v1/user_credits",
+                headers={**_sb_headers(), "Prefer": "return=representation"},
+                params={"user_id": f"eq.{_db_id(vk_id)}",
+                        "promo_redeemed": f"not.like.*{code}*"},
+                json={"promo_redeemed": new_redeemed},
+                timeout=10,
+            )
+            reserved = bool(pr.ok and pr.json())
+        except Exception as e:
+            print(f"[PROMO] reserve error: {e}")
+            reserved = False
+        if not reserved:
+            return jsonify(ok=False, error="already", msg="Этот промокод уже активирован")
+
+        # Резерв наш — теперь можно безопасно начислить кредиты
         u = get_user(vk_id)
         for k, v in reward.items():
             key = CREDIT_KEY.get(k, k + "_credits")
             u[key] = u.get(key, 0) + v
         _save_credits_to_db(vk_id)
-
-        # Помечаем код активированным (список кодов через запятую)
-        new_redeemed = f"{redeemed},{code}".strip(",") if redeemed else code
-        try:
-            requests.patch(
-                f"{SUPABASE_URL}/rest/v1/user_credits",
-                headers={**_sb_headers(), "Prefer": "return=minimal"},
-                params={"user_id": f"eq.{_db_id(vk_id)}"},
-                json={"promo_redeemed": new_redeemed},
-                timeout=10,
-            )
-        except Exception as e:
-            print(f"[PROMO] mark error: {e}")
 
         return jsonify(ok=True, msg="✅ Промокод активирован! Кредиты начислены 🎁")
 
