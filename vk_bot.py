@@ -1644,33 +1644,12 @@ def make_flask_app(vk, upload, group_id):
             print(f"[API] style-one error: {e}")
             return jsonify(ok=False), 500
 
-    @app.route("/yookassa-webhook-vk", methods=["POST"])
-    def yk_webhook():
-        data = freq.get_json(silent=True) or {}
-        obj = data.get("object", {})
-        if data.get("event") != "payment.succeeded":
-            return jsonify(ok=True)
-        meta = obj.get("metadata", {})
-        vk_id_str = meta.get("vk_id")
-        tariff_key = meta.get("tariff")
-        if not vk_id_str or not tariff_key:
-            return jsonify(ok=True)
-        vk_id = int(vk_id_str)
-        ensure_dynamic_tariff(tariff_key)
-        msg = add_credits(vk_id, tariff_key)
-        send(vk, vk_id, f"✅ Оплата получена!\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
-        return jsonify(ok=True)
-
-    @app.route("/api/yk-credit-vk", methods=["POST"])
-    def yk_credit_vk():
-        """Вызывается TG-ботом: ЮKassa-вебхук общий для TG и VK, но шлёт
-        уведомления на URL TG-бота. Если в metadata платежа есть vk_id/tariff
-        (не user_id/tariff_key), TG-бот пробрасывает payment_id сюда."""
-        data = freq.get_json(silent=True) or {}
-        payment_id = data.get("payment_id")
+    def _verify_and_credit_yk_payment(payment_id: str) -> dict:
+        """Никогда не доверяем vk_id/tariff из тела входящего запроса напрямую —
+        берём только payment_id и перепроверяем реальный статус и сумму платежа
+        через собственный запрос к API ЮKassa (авторизованный shop_id/секретом)."""
         if not payment_id or not YOKASSA_SHOP_ID or not YOKASSA_KEY:
-            return jsonify(ok=False), 400
-
+            return {"ok": False, "reason": "not_configured"}
         try:
             r = requests.get(
                 f"https://api.yookassa.ru/v3/payments/{payment_id}",
@@ -1678,21 +1657,24 @@ def make_flask_app(vk, upload, group_id):
                 timeout=10,
             )
             if not r.ok:
-                return jsonify(ok=False), 502
+                return {"ok": False, "reason": "verify_failed"}
             verified = r.json()
         except Exception as e:
-            print(f"[YK-VK] verify error: {e}")
-            return jsonify(ok=False), 500
+            print(f"[YK] verify error: {e}")
+            return {"ok": False, "reason": "verify_error"}
 
         if verified.get("status") != "succeeded":
-            return jsonify(ok=False, reason="not_succeeded")
+            return {"ok": False, "reason": "not_succeeded"}
 
         meta = verified.get("metadata", {}) or {}
         vk_id_str = meta.get("vk_id")
         tariff_key = meta.get("tariff")
         if not vk_id_str or not tariff_key:
-            return jsonify(ok=False, reason="no_metadata")
-        vk_id = int(vk_id_str)
+            return {"ok": False, "reason": "no_metadata"}
+        try:
+            vk_id = int(vk_id_str)
+        except (TypeError, ValueError):
+            return {"ok": False, "reason": "bad_vk_id"}
 
         # Идемпотентность: payment_id уже обработан?
         try:
@@ -1703,21 +1685,20 @@ def make_flask_app(vk, upload, group_id):
                 timeout=10,
             )
             if check.ok and check.json():
-                return jsonify(ok=True, already=True)
+                return {"ok": True, "already": True}
         except Exception as e:
-            print(f"[YK-VK] idempotency check error: {e}")
+            print(f"[YK] idempotency check error: {e}")
 
         ensure_dynamic_tariff(tariff_key)
         if tariff_key not in TARIFF_PRICES:
-            return jsonify(ok=False, reason="unknown_tariff")
+            return {"ok": False, "reason": "unknown_tariff"}
 
         label, _, _, price = TARIFF_PRICES[tariff_key]
         paid = float(verified.get("amount", {}).get("value", "0") or 0)
         if paid < price * 0.05:
-            return jsonify(ok=False, reason="amount_mismatch")
+            return {"ok": False, "reason": "amount_mismatch"}
 
         msg = add_credits(vk_id, tariff_key)
-        send(vk, vk_id, f"✅ Оплата получена!\n{msg}\n\n{credits_text(vk_id)}", keyboard=kb_main())
 
         try:
             requests.post(
@@ -1735,9 +1716,37 @@ def make_flask_app(vk, upload, group_id):
                 timeout=10,
             )
         except Exception as e:
-            print(f"[YK-VK] record payment error: {e}")
+            print(f"[YK] record payment error: {e}")
 
+        return {"ok": True, "vk_id": vk_id, "msg": msg}
+
+    @app.route("/yookassa-webhook-vk", methods=["POST"])
+    def yk_webhook():
+        data = freq.get_json(silent=True) or {}
+        if data.get("event") != "payment.succeeded":
+            return jsonify(ok=True)
+        payment_id = (data.get("object") or {}).get("id")
+        result = _verify_and_credit_yk_payment(payment_id)
+        if result.get("ok") and not result.get("already") and result.get("vk_id"):
+            send(vk, result["vk_id"],
+                 f"✅ Оплата получена!\n{result['msg']}\n\n{credits_text(result['vk_id'])}",
+                 keyboard=kb_main())
+        # ЮKassa ждёт 200 в любом случае, иначе будет повторять запрос
         return jsonify(ok=True)
+
+    @app.route("/api/yk-credit-vk", methods=["POST"])
+    def yk_credit_vk():
+        """Вызывается TG-ботом: ЮKassa-вебхук общий для TG и VK, но шлёт
+        уведомления на URL TG-бота. Если в metadata платежа есть vk_id/tariff
+        (не user_id/tariff_key), TG-бот пробрасывает payment_id сюда."""
+        data = freq.get_json(silent=True) or {}
+        payment_id = data.get("payment_id")
+        result = _verify_and_credit_yk_payment(payment_id)
+        if result.get("ok") and not result.get("already") and result.get("vk_id"):
+            send(vk, result["vk_id"],
+                 f"✅ Оплата получена!\n{result['msg']}\n\n{credits_text(result['vk_id'])}",
+                 keyboard=kb_main())
+        return jsonify(ok=result.get("ok", False))
 
     return app
 
