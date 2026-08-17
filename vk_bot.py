@@ -1357,7 +1357,7 @@ def make_flask_app(vk, upload, group_id):
             vk_id = int(data.get("vk_id", 0))
         except (TypeError, ValueError):
             return jsonify(ok=False, error="bad vk_id"), 400
-        code = (data.get("code") or "").strip().upper()
+        code = str(data.get("code") or "").strip().upper()
         if not vk_id or not code:
             return jsonify(ok=False, error="empty"), 400
         entry = PROMO_CODES.get(code)
