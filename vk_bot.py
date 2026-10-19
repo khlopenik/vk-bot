@@ -43,6 +43,7 @@ DISCOUNT_MULT = 0.5
 # Промокоды: код → {reward: сколько кредитов, max: лимит активаций ВСЕГО}.
 # VKTEST для тестеров VK — с жёстким лимитом 5 активаций, чтобы не раздать бесплатное сотням.
 PROMO_CODES = {}
+PROMO_ENABLED = False  # главный выключатель промокодов
 
 # ─── Модели ───────────────────────────────────────────────────────────────────
 GALLERY_MODELS = {
@@ -1320,6 +1321,10 @@ def make_flask_app(vk, upload, group_id):
     @app.route("/api/promo", methods=["POST"])
     def api_promo():
         """Активация промокода: начисляет бесплатные кредиты один раз на пользователя."""
+        # Промокоды выключены полностью (19.10.2026): никаких начислений, даже если
+        # кто-то вернёт код в PROMO_CODES или дёрнет эндпоинт напрямую.
+        if not PROMO_ENABLED:
+            return jsonify(ok=False, error="disabled", msg="Промокоды больше не действуют")
         data = freq.get_json(silent=True) or {}
         try:
             vk_id = int(data.get("vk_id", 0))
